@@ -2299,6 +2299,40 @@ static void dispatchCollisionEvents(Runner* runner) {
                             other->y += other->vspeed;
                             SpatialGrid_markInstanceAsDirty(runner->spatialGrid, other);
                         }
+
+                        // When we are in collision compatibility mode, we need to recheck if the player is STILL colliding after we have moved them
+                        // If they are, we revert the collision
+                        if (runner->collisionCompatibilityMode) {
+                            InstanceBBox bboxSelf2 = Collision_computeBBox(dataWin, self);
+                            InstanceBBox bboxOther2 = Collision_computeBBox(dataWin, other);
+                            if (bboxSelf2.valid && bboxOther2.valid) {
+                                bool aabbMiss2 = bboxSelf2.left >= bboxOther2.right || bboxOther2.left >= bboxSelf2.right || bboxSelf2.top >= bboxOther2.bottom || bboxOther2.top >= bboxSelf2.bottom;
+                                bool stillColliding = false;
+                                if (!aabbMiss2) {
+                                    Sprite* sprSelf2 = Collision_getSprite(dataWin, self);
+                                    Sprite* sprOther2 = Collision_getSprite(dataWin, other);
+                                    bool needsPrecise2 = (sprSelf2 != nullptr && sprSelf2->sepMasks == 1) || (sprOther2 != nullptr && sprOther2->sepMasks == 1) || Collision_obbNeedsSAT(sprSelf2, self) || Collision_obbNeedsSAT(sprOther2, other);
+                                    if (needsPrecise2) {
+                                        stillColliding = Collision_instancesOverlapPrecise(dataWin, runner->collisionCompatibilityMode, self, other, bboxSelf2, bboxOther2);
+                                    } else {
+                                        stillColliding = true;
+                                    }
+                                }
+                                if (stillColliding) {
+    #ifdef ENABLE_VM_TRACING
+                                    if (traceThisPair) fprintf(stderr, "  post-event re-revert: still colliding, restoring self=(%g,%g)->(%g,%g) other=(%g,%g)->(%g,%g)\n", self->x, self->y, self->xprevious, self->yprevious, other->x, other->y, other->xprevious, other->yprevious);
+    #endif
+                                    self->x = self->xprevious;
+                                    self->y = self->yprevious;
+                                    if (self->pathIndex >= 0) self->pathPosition = self->pathPositionPrevious;
+                                    other->x = other->xprevious;
+                                    other->y = other->yprevious;
+                                    if (other->pathIndex >= 0) other->pathPosition = other->pathPositionPrevious;
+                                    SpatialGrid_markInstanceAsDirty(runner->spatialGrid, self);
+                                    SpatialGrid_markInstanceAsDirty(runner->spatialGrid, other);
+                                }
+                            }
+                        }
                     }
 
                     // The collision event may have moved our instance, so we'll need to regenerate our self attributes!
