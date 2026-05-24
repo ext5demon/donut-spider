@@ -11172,7 +11172,6 @@ void VMBuiltins_registerAll(VMContext* ctx) {
     requireMessage(!ctx->registeredBuiltinFunctions, "Attempting to register all VMBuiltins, but it was already registered!");
     ctx->registeredBuiltinFunctions = true;
 
-    const bool isBC13 = ctx->dataWin->gen8.bytecodeVersion;
     const bool isGMS2 = DataWin_isVersionAtLeast(ctx->dataWin, 2, 0, 0, 0);
 
     // Core output
@@ -11398,7 +11397,6 @@ void VMBuiltins_registerAll(VMContext* ctx) {
     VM_registerBuiltin(ctx, "audio_sound_set_track_position", builtin_audio_sound_set_track_position);
     VM_registerBuiltin(ctx, "audio_create_stream", builtin_audio_create_stream);
     VM_registerBuiltin(ctx, "audio_destroy_stream", builtin_audio_destroy_stream);
-
     if (!isGMS2) {
         VM_registerBuiltin(ctx, "action_sound",builtin_action_sound);
         VM_registerBuiltin(ctx, "action_end_sound", builtin_audio_stop_sound);
