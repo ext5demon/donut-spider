@@ -1069,7 +1069,7 @@ void VMBuiltins_setVariable(VMContext* ctx, int16_t builtinVarId, const char* na
                 inst->spriteIndex = value;
                 // The native runner resets the image_index to zero if the new frame count is smaller than the current image_index
                 if (value >= 0 && runner->dataWin->sprt.count > (uint32_t) value) {
-                    uint32_t newFrameCount = runner->dataWin->sprt.sprites[value].textureCount;
+                    int32_t newFrameCount = (int32_t) runner->dataWin->sprt.sprites[value].textureCount;
                     if (newFrameCount > 0 && (int32_t) inst->imageIndex >= newFrameCount) {
                         inst->imageIndex = 0;
                     }
