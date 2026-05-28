@@ -9355,7 +9355,7 @@ static RValue builtin_alarm_get(VMContext* ctx, MAYBE_UNUSED RValue* args, MAYBE
 // String operands compare via strcmp; mismatched types compare unequal.
 static RValue builtin_action_if_variable(VMContext* ctx, MAYBE_UNUSED RValue* args, MAYBE_UNUSED int32_t argCount) {
     int32_t op = RValue_toInt32(args[2]);
-    double diff;
+    GMLReal diff;
 
     bool aIsString = args[0].type == RVALUE_STRING;
     bool bIsString = args[1].type == RVALUE_STRING;
@@ -9365,9 +9365,9 @@ static RValue builtin_action_if_variable(VMContext* ctx, MAYBE_UNUSED RValue* ar
     if (aIsString) {
         const char* sa = args[0].string != nullptr ? args[0].string : "";
         const char* sb = args[1].string != nullptr ? args[1].string : "";
-        diff = (double) strcmp(sa, sb);
+        diff = (GMLReal) strcmp(sa, sb);
     } else {
-        diff = (double) (RValue_toReal(args[0]) - RValue_toReal(args[1]));
+        diff = (GMLReal) (RValue_toReal(args[0]) - RValue_toReal(args[1]));
     }
 
     bool result;
@@ -9375,7 +9375,7 @@ static RValue builtin_action_if_variable(VMContext* ctx, MAYBE_UNUSED RValue* ar
     else if (op == LEGACY_DND_CMP_GT) result = diff > 0.0;
     else if (op == LEGACY_DND_CMP_LTE) result = diff <= 0.0;
     else if (op == LEGACY_DND_CMP_GTE) result = diff >= 0.0;
-    else result = diff == 0.0;
+    else result = diff == 0.0f;
     return RValue_makeBool(result);
 }
 
