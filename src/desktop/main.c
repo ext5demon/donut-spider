@@ -152,6 +152,7 @@ typedef struct {
     const char* playbackInputsPath;
     const char* renderer;
     YoYoOperatingSystem osType;
+    int windowWidth, windowHeight; // 0 = auto (gen8 default, or the console-native size for console os-types)
     char** gameArgs; // stb_ds array of owned strings, gameArgs[0] = runner executable path
     bool lazyRooms;
     StringBooleanEntry* eagerRooms; // stb_ds string-keyed set of room names
@@ -204,6 +205,38 @@ static bool parseOsTypeArg(const char* s, YoYoOperatingSystem* out) {
 static void printOsTypeNames(FILE* out) {
     forEachIndexed(const OsTypeNameEntry, entry, i, OS_TYPE_NAMES, OS_TYPE_NAMES_COUNT) {
         fprintf(out, "%s%s", i > 0 ? ", " : "", entry->name);
+    }
+}
+
+// Resolves the window size for the specified operating system.
+// The "--window-size" argument takes precedence over the default resolution for each platform.
+static void resolveWindowSize(const CommandLineArgs* args, uint32_t gen8Width, uint32_t gen8Height, int* outW, int* outH) {
+    if (args->windowWidth > 0 && args->windowHeight > 0) {
+        *outW = args->windowWidth;
+        *outH = args->windowHeight;
+        return;
+    }
+
+    switch (args->osType) {
+        case OS_PS4:
+        case OS_XBOXONE:
+        case OS_PS3:
+        case OS_XBOX360:
+            *outW = 1920;
+            *outH = 1080;
+            break;
+        case OS_SWITCH:
+            *outW = 1280;
+            *outH = 720;
+            break;
+        case OS_PSVITA:
+            *outW = 960;
+            *outH = 544;
+            break;
+        default:
+            *outW = (int) gen8Width;
+            *outH = (int) gen8Height;
+            break;
     }
 }
 
@@ -272,6 +305,7 @@ static void parseCommandLineArgs(CommandLineArgs* args, int argc, char* argv[]) 
         {"lazy-rooms", no_argument, nullptr, 'z'},
         {"eager-room", required_argument, nullptr, 'G'},
         {"os-type", required_argument, nullptr, 'O'},
+        {"window-size", required_argument, nullptr, 'w'},
         {"profile-gml-scripts", required_argument, nullptr, 'q'},
         {"save-folder", required_argument, nullptr, 'B'},
         {"game-args", required_argument, nullptr, 'N'},
@@ -514,6 +548,16 @@ static void parseCommandLineArgs(CommandLineArgs* args, int argc, char* argv[]) 
                     exit(1);
                 }
                 break;
+            case 'w': {
+                int w = 0, h = 0;
+                if (sscanf(optarg, "%dx%d", &w, &h) != 2 || 0 >= w || 0 >= h) {
+                    fprintf(stderr, "Error: Invalid --window-size value '%s' (expected WxH, e.g. 960x544)\n", optarg);
+                    exit(1);
+                }
+                args->windowWidth = w;
+                args->windowHeight = h;
+                break;
+            }
             default:
                 fprintf(stderr, "Usage: %s <path to data.win or game.unx>\n", argv[0]);
                 exit(1);
@@ -976,8 +1020,11 @@ int main(int argc, char* argv[]) {
         }
 
 
+        int windowW, windowH;
+        resolveWindowSize(&args, gen8->defaultWindowWidth, gen8->defaultWindowHeight, &windowW, &windowH);
+
         if (!platformInitialized) {
-            if (!platformInit((int)gen8->defaultWindowWidth, (int)gen8->defaultWindowHeight, windowTitle, args.headless)) {
+            if (!platformInit(windowW, windowH, windowTitle, args.headless)) {
                 DataWin_free(dataWin);
                 freeCommandLineArgs(&args);
                 return 1;
@@ -1014,7 +1061,7 @@ int main(int argc, char* argv[]) {
         } else {
             // game_change path: reuse the existing window/GL context, just retitle and resize for the new game.
             platformSetWindowTitle(gen8->displayName);
-            platformSetWindowSize((int32_t) gen8->defaultWindowWidth, (int32_t) gen8->defaultWindowHeight);
+            platformSetWindowSize((int32_t) windowW, (int32_t) windowH);
         }
 
         // Initialize the renderer
