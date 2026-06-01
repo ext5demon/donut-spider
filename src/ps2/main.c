@@ -438,7 +438,7 @@ int main(int argc, char* argv[]) {
 
     bool wadVersionSupported = false;
 #ifdef ENABLE_WAD14
-    if (dataWin->gen8.wadVersion == 13 || dataWin->gen8.wadVersion == 14) wadVersionSupported = true;
+    if (14 >= dataWin->gen8.wadVersion) wadVersionSupported = true;
 #endif
 #ifdef ENABLE_WAD16
     if (dataWin->gen8.wadVersion == 15 || dataWin->gen8.wadVersion == 16) wadVersionSupported = true;
