@@ -246,12 +246,16 @@ if(PLATFORM STREQUAL "desktop")
                 $<TARGET_FILE_DIR:butterscotch>/gamecontrollerdb.txt
         )
     elseif(DESKTOP_BACKEND STREQUAL "glfw2")
+        add_compile_definitions(USE_GLFW2)
+
         find_package(PkgConfig REQUIRED)
         pkg_check_modules(GLFW2 REQUIRED libglfw)
         target_include_directories(butterscotch PRIVATE ${GLFW2_INCLUDE_DIRS})
         target_link_directories(butterscotch PRIVATE ${GLFW2_LIBRARY_DIRS})
         set(BACKEND_LIBRARIES ${GLFW2_LIBRARIES})
     elseif(DESKTOP_BACKEND STREQUAL "sdl1")
+        add_compile_definitions(USE_SDL1)
+
         find_package(SDL REQUIRED)
         target_include_directories(butterscotch PUBLIC ${SDL_INCLUDE_DIR})
         set(BACKEND_LIBRARIES ${SDL_LIBRARY})
