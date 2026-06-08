@@ -571,8 +571,8 @@ static void glApplyProjection(Renderer* renderer, const Matrix4f* worldToClip) {
     flushBatch(gl);
     Matrix4f projection = *worldToClip;
     Matrix4f_flipClipY(&projection);
-    glUseProgram(gl->shaderProgram);
-    glUniformMatrix4fv(gl->uProjection, 1, GL_FALSE, projection.m);
+    renderer->gmlMatrices[MATRIX_WORLD_VIEW_PROJECTION] = projection;
+    glShaderSettingsRefresh(renderer);
     renderer->previousViewMatrix = projection;
 }
 
