@@ -1636,7 +1636,7 @@ int main(int argc, char* argv[]) {
                 // Capture screenshot if this frame matches a requested frame
                 bool shouldScreenshot = hmget(args.screenshotFrames, runner->frameCount);
 
-                if (shouldScreenshot) {
+                if (shouldScreenshot || RunnerKeyboard_checkPressed(runner->keyboard, VK_F5)) {
                     int32_t appId = runner->applicationSurfaceId;
                     GLuint readFbo;
 #ifdef ENABLE_LEGACY_GL
@@ -1654,7 +1654,7 @@ int main(int argc, char* argv[]) {
                 // Dump all surfaces if this frame matches a requested frame
                 bool shouldDumpSurfaces = hmget(args.screenshotSurfacesFrames, runner->frameCount);
 
-                if (shouldDumpSurfaces) {
+                if (shouldDumpSurfaces || RunnerKeyboard_checkPressed(runner->keyboard, VK_F6)) {
                     GLRenderer* gl = (GLRenderer*) renderer;
                     dumpAllSurfaces(gl, args.screenshotSurfacesPattern, runner->frameCount);
                     glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
