@@ -9084,6 +9084,37 @@ static RValue builtin_draw_circle_color(VMContext* ctx, RValue* args, MAYBE_UNUS
     return RValue_makeUndefined();
 }
 
+// draw_ellipse(x1, y1, x2, y2, outline)
+static RValue builtin_draw_ellipse(VMContext* ctx, RValue* args, MAYBE_UNUSED int32_t argCount) {
+    Runner* runner = ctx->runner;
+    if (runner->renderer != nullptr) {
+        float x1 = (float) RValue_toReal(args[0]);
+        float y1 = (float) RValue_toReal(args[1]);
+        float x2 = (float) RValue_toReal(args[2]);
+        float y2 = (float) RValue_toReal(args[3]);
+        bool outline = RValue_toBool(args[4]);
+        uint32_t color = runner->renderer->drawColor;
+        Renderer_drawEllipseColor(runner->renderer, (x1 + x2) * 0.5f, (y1 + y2) * 0.5f, (x2 - x1) * 0.5f, (y2 - y1) * 0.5f, color, color, outline);
+    }
+    return RValue_makeUndefined();
+}
+
+// draw_ellipse_color(x1, y1, x2, y2, col1, col2, outline)
+static RValue builtin_draw_ellipse_color(VMContext* ctx, RValue* args, MAYBE_UNUSED int32_t argCount) {
+    Runner* runner = ctx->runner;
+    if (runner->renderer != nullptr) {
+        float x1 = (float) RValue_toReal(args[0]);
+        float y1 = (float) RValue_toReal(args[1]);
+        float x2 = (float) RValue_toReal(args[2]);
+        float y2 = (float) RValue_toReal(args[3]);
+        uint32_t col1 = (uint32_t) RValue_toInt32(args[4]);
+        uint32_t col2 = (uint32_t) RValue_toInt32(args[5]);
+        bool outline = RValue_toBool(args[6]);
+        Renderer_drawEllipseColor(runner->renderer, (x1 + x2) * 0.5f, (y1 + y2) * 0.5f, (x2 - x1) * 0.5f, (y2 - y1) * 0.5f, col1, col2, outline);
+    }
+    return RValue_makeUndefined();
+}
+
 // draw_set_circle_precision(precision)
 static RValue builtin_draw_set_circle_precision(VMContext* ctx, RValue* args, MAYBE_UNUSED int32_t argCount) {
     Runner* runner = ctx->runner;
@@ -14512,6 +14543,9 @@ void VMBuiltins_registerAll(VMContext* ctx) {
     VM_registerBuiltin(ctx, "draw_circle", builtin_draw_circle);
     VM_registerBuiltin(ctx, "draw_circle_colour", builtin_draw_circle_color);
     VM_registerBuiltin(ctx, "draw_circle_color", builtin_draw_circle_color);
+    VM_registerBuiltin(ctx, "draw_ellipse", builtin_draw_ellipse);
+    VM_registerBuiltin(ctx, "draw_ellipse_colour", builtin_draw_ellipse_color);
+    VM_registerBuiltin(ctx, "draw_ellipse_color", builtin_draw_ellipse_color);
     VM_registerBuiltin(ctx, "draw_set_circle_precision", builtin_draw_set_circle_precision);
     VM_registerBuiltin(ctx, "draw_get_circle_precision", builtin_draw_get_circle_precision);
     VM_registerBuiltin(ctx, "draw_set_colour", builtin_draw_set_colour);
