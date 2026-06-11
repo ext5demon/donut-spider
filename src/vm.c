@@ -633,6 +633,31 @@ void VM_copyStatic(VMContext* ctx, RValue* parentRef) {
 }
 #endif
 
+// Tries reading a instance variable (from the selfVars map) and, if it doesn't exist, tries reading from the shared static struct.
+static bool tryReadInstanceVarOrStatic(VMContext* ctx, Instance* instance, int32_t varID, ArrayAccess* access, RValue* out) {
+    RValue* slot = IntRValueHashMap_findSlot(&instance->selfVars, varID);
+    if (slot != nullptr) {
+        if (access->isArray) {
+            *out = VM_arrayReadAt(slot, access->arrayIndex);
+            return true;
+        }
+        RValue val = *slot;
+        val.ownsReference = false;
+        *out = val;
+        return true;
+    }
+
+#if IS_WAD17_OR_HIGHER_ENABLED
+    // Static variables: a struct field declared "static" lives on the constructor's shared static struct, not the instance.
+    RValue staticVal;
+    if (tryReadStaticFallback(ctx, instance, varID, access, &staticVal)) {
+        *out = staticVal;
+        return true;
+    }
+#endif
+    return false;
+}
+
 static RValue resolveVariableRead(VMContext* ctx, int32_t instanceType, uint32_t varRef) {
     Variable* varDef = resolveVarDef(ctx, varRef);
     ArrayAccess access = popArrayAccess(ctx, varRef);
@@ -724,35 +749,18 @@ static RValue resolveVariableRead(VMContext* ctx, int32_t instanceType, uint32_t
             int32_t peekId = RValue_toInt32(*peek);
             Instance* peekInst = findInstanceByTarget(ctx, peekId);
             if (peekInst != nullptr) {
-                RValue* peekSlot = IntRValueHashMap_findSlot(&peekInst->selfVars, varDef->varID);
-                if (peekSlot != nullptr) {
-                    RValue val = *peekSlot;
-                    val.ownsReference = false;
-                    return val;
-                }
-                // Static variables: a struct field declared "static" lives on the constructor's shared static struct, not the instance.
-                RValue staticVal;
-                if (tryReadStaticFallback(ctx, peekInst, varDef->varID, &access, &staticVal)) {
-                    return staticVal;
-                }
+                RValue value;
+                if (tryReadInstanceVarOrStatic(ctx, peekInst, varDef->varID, &access, &value))
+                    return value;
             }
         }
 
         // GameMaker emits a "push builtin" inside a function for "read this as a self-variable"
         if (varDef->instanceType == INSTANCE_SELF && ctx->currentInstance != nullptr) {
             Instance* self = (Instance*) ctx->currentInstance;
-            RValue* selfSlot = IntRValueHashMap_findSlot(&self->selfVars, varDef->varID);
-            if (selfSlot != nullptr) {
-                if (access.isArray) return VM_arrayReadAt(selfSlot, access.arrayIndex);
-                RValue val = *selfSlot;
-                val.ownsReference = false;
-                return val;
-            }
-            // Static variables: a struct field declared "static" lives on the constructor's shared static struct, not the instance.
-            RValue staticVal;
-            if (tryReadStaticFallback(ctx, self, varDef->varID, &access, &staticVal)) {
-                return staticVal;
-            }
+            RValue value;
+            if (tryReadInstanceVarOrStatic(ctx, self, varDef->varID, &access, &value))
+                return value;
         }
 
         // Then try user scripts/code entries (funcMap maps both "funcName" and "gml_Script_funcName")
@@ -789,13 +797,9 @@ static RValue resolveVariableRead(VMContext* ctx, int32_t instanceType, uint32_t
             ptrdiff_t nameSlot = shgeti(ctx->selfVarNameMap, (char*) varDef->name);
             if (nameSlot >= 0) {
                 int32_t structVarID = ctx->selfVarNameMap[nameSlot].value;
-                RValue* slot = IntRValueHashMap_findSlot(&targetInstance->selfVars, structVarID);
-                if (slot != nullptr) {
-                    if (access.isArray) return VM_arrayReadAt(slot, access.arrayIndex);
-                    RValue val = *slot;
-                    val.ownsReference = false;
-                    return val;
-                }
+                RValue value;
+                if (tryReadInstanceVarOrStatic(ctx, targetInstance, structVarID, &access, &value))
+                    return value;
             }
         }
         // For object/instance references, temporarily swap currentInstance so VMBuiltins reads the correct instance
