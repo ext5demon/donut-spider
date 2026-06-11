@@ -1026,52 +1026,45 @@ static void glDrawRectangleColor(Renderer* renderer, float x1, float y1, float x
     }
 }
 
-static void glDrawTriangle(Renderer *renderer, float x1, float y1, float x2, float y2, float x3, float y3, bool outline) {
+static void glDrawTriangle(Renderer *renderer, float x1, float y1, float x2, float y2, float x3, float y3, uint32_t color1, uint32_t color2, uint32_t color3, float alpha, bool outline) {
     GLRenderer* gl = (GLRenderer*) renderer;
     if (outline) {
-        glDrawLine(renderer, x1, y1, x2, y2, 1, renderer->drawColor, 1.0);
-        glDrawLine(renderer, x2, y2, x3, y3, 1, renderer->drawColor, 1.0);
-        glDrawLine(renderer, x3, y3, x1, y1, 1, renderer->drawColor, 1.0);
+        glDrawLineColor(renderer, x1, y1, x2, y2, 1, color1, color2, alpha);
+        glDrawLineColor(renderer, x2, y2, x3, y3, 1, color2, color3, alpha);
+        glDrawLineColor(renderer, x3, y3, x1, y1, 1, color3, color1, alpha);
     } else {
-        float r = (float) BGR_R(renderer->drawColor) / 255.0f;
-        float g = (float) BGR_G(renderer->drawColor) / 255.0f;
-        float b = (float) BGR_B(renderer->drawColor) / 255.0f;
-
         flushIfNeededAndSetActiveState(gl, BATCHTYPE_TRIANGLE, gl->whiteTexture);
 
         // Woo, pointers!
         // This gets the vertex data for the new triangle batch
         float* verts = gl->vertexData + gl->batchCount * VERTICES_PER_TRIANGLE * FLOATS_PER_VERTEX;
 
-        // Vertex 0: top-left
         verts[0] = x1;
         verts[1] = y1;
         verts[2] = 0.0f;
         verts[3] = 0.0f;
-        verts[4] = r;
-        verts[5] = g;
-        verts[6] = b;
-        verts[7] = renderer->drawAlpha;
+        verts[4] = (float) BGR_R(color1) / 255.0f;
+        verts[5] = (float) BGR_G(color1) / 255.0f;
+        verts[6] = (float) BGR_B(color1) / 255.0f;
+        verts[7] = alpha;
 
-        // Vertex 1: top-right
         verts[8]  = x2;
         verts[9]  = y2;
         verts[10] = 0.0f;
         verts[11] = 0.0f;
-        verts[12] = r;
-        verts[13] = g;
-        verts[14] = b;
-        verts[15] = renderer->drawAlpha;
+        verts[12] = (float) BGR_R(color2) / 255.0f;
+        verts[13] = (float) BGR_G(color2) / 255.0f;
+        verts[14] = (float) BGR_B(color2) / 255.0f;
+        verts[15] = alpha;
 
-        // Vertex 2: bottom-right
         verts[16] = x3;
         verts[17] = y3;
         verts[18] = 0.0f;
         verts[19] = 0.0f;
-        verts[20] = r;
-        verts[21] = g;
-        verts[22] = b;
-        verts[23] = renderer->drawAlpha;
+        verts[20] = (float) BGR_R(color3) / 255.0f;
+        verts[21] = (float) BGR_G(color3) / 255.0f;
+        verts[22] = (float) BGR_B(color3) / 255.0f;
+        verts[23] = alpha;
 
         gl->batchCount++;
     }

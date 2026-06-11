@@ -8835,7 +8835,27 @@ static RValue builtin_draw_triangle(VMContext* ctx, RValue* args, MAYBE_UNUSED i
         float x3 = (float) RValue_toReal(args[4]);
         float y3 = (float) RValue_toReal(args[5]);
         bool outline = (float) RValue_toBool(args[6]);
-        runner->renderer->vtable->drawTriangle(runner->renderer, x1, y1, x2, y2, x3, y3, outline);
+        uint32_t color = runner->renderer->drawColor;
+        runner->renderer->vtable->drawTriangle(runner->renderer, x1, y1, x2, y2, x3, y3, color, color, color, runner->renderer->drawAlpha, outline);
+    }
+    return RValue_makeUndefined();
+}
+
+// draw_triangle_color(x1, y1, x2, y2, x3, y3, col1, col2, col3, outline)
+static RValue builtin_draw_triangle_color(VMContext* ctx, RValue* args, MAYBE_UNUSED int32_t argCount) {
+    Runner* runner = ctx->runner;
+    if (runner->renderer != nullptr) {
+        float x1 = (float) RValue_toReal(args[0]);
+        float y1 = (float) RValue_toReal(args[1]);
+        float x2 = (float) RValue_toReal(args[2]);
+        float y2 = (float) RValue_toReal(args[3]);
+        float x3 = (float) RValue_toReal(args[4]);
+        float y3 = (float) RValue_toReal(args[5]);
+        uint32_t col1 = (uint32_t) RValue_toInt32(args[6]);
+        uint32_t col2 = (uint32_t) RValue_toInt32(args[7]);
+        uint32_t col3 = (uint32_t) RValue_toInt32(args[8]);
+        bool outline = RValue_toBool(args[9]);
+        runner->renderer->vtable->drawTriangle(runner->renderer, x1, y1, x2, y2, x3, y3, col1, col2, col3, runner->renderer->drawAlpha, outline);
     }
     return RValue_makeUndefined();
 }
@@ -8849,6 +8869,21 @@ static RValue builtin_draw_circle(VMContext* ctx, RValue* args, MAYBE_UNUSED int
         float r = (float) RValue_toReal(args[2]);
         bool outline = RValue_toBool(args[3]);
         Renderer_drawCircle(runner->renderer, x, y, r, outline);
+    }
+    return RValue_makeUndefined();
+}
+
+// draw_circle_color(x, y, r, col1, col2, outline)
+static RValue builtin_draw_circle_color(VMContext* ctx, RValue* args, MAYBE_UNUSED int32_t argCount) {
+    Runner* runner = ctx->runner;
+    if (runner->renderer != nullptr) {
+        float x = (float) RValue_toReal(args[0]);
+        float y = (float) RValue_toReal(args[1]);
+        float r = (float) RValue_toReal(args[2]);
+        uint32_t col1 = (uint32_t) RValue_toInt32(args[3]);
+        uint32_t col2 = (uint32_t) RValue_toInt32(args[4]);
+        bool outline = RValue_toBool(args[5]);
+        Renderer_drawCircleColor(runner->renderer, x, y, r, col1, col2, outline);
     }
     return RValue_makeUndefined();
 }
@@ -14137,7 +14172,11 @@ void VMBuiltins_registerAll(VMContext* ctx) {
     VM_registerBuiltin(ctx, "draw_line_width_colour", builtin_draw_line_width_colour);
     VM_registerBuiltin(ctx, "draw_line_width_color", builtin_draw_line_width_colour);
     VM_registerBuiltin(ctx, "draw_triangle", builtin_draw_triangle);
+    VM_registerBuiltin(ctx, "draw_triangle_colour", builtin_draw_triangle_color);
+    VM_registerBuiltin(ctx, "draw_triangle_color", builtin_draw_triangle_color);
     VM_registerBuiltin(ctx, "draw_circle", builtin_draw_circle);
+    VM_registerBuiltin(ctx, "draw_circle_colour", builtin_draw_circle_color);
+    VM_registerBuiltin(ctx, "draw_circle_color", builtin_draw_circle_color);
     VM_registerBuiltin(ctx, "draw_set_circle_precision", builtin_draw_set_circle_precision);
     VM_registerBuiltin(ctx, "draw_get_circle_precision", builtin_draw_get_circle_precision);
     VM_registerBuiltin(ctx, "draw_set_colour", builtin_draw_set_colour);

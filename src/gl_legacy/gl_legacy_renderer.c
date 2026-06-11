@@ -775,33 +775,29 @@ static void glDrawLineColor(Renderer* renderer, float x1, float y1, float x2, fl
     glEnd();
 }
 
-static void glDrawTriangle(Renderer *renderer, float x1, float y1, float x2, float y2, float x3, float y3, bool outline)
+static void glDrawTriangle(Renderer *renderer, float x1, float y1, float x2, float y2, float x3, float y3, uint32_t color1, uint32_t color2, uint32_t color3, float alpha, bool outline)
 {
     GLLegacyRenderer* gl = (GLLegacyRenderer*) renderer;
     if(outline)
     {
-        glDrawLine(renderer, x1, y1, x2, y2, 1, renderer->drawColor, 1.0);
-        glDrawLine(renderer, x2, y2, x3, y3, 1, renderer->drawColor, 1.0);
-        glDrawLine(renderer, x3, y3, x1, y1, 1, renderer->drawColor, 1.0);
+        glDrawLineColor(renderer, x1, y1, x2, y2, 1, color1, color2, alpha);
+        glDrawLineColor(renderer, x2, y2, x3, y3, 1, color2, color3, alpha);
+        glDrawLineColor(renderer, x3, y3, x1, y1, 1, color3, color1, alpha);
     } else {
-        float r = (float) BGR_R(renderer->drawColor) / 255.0f;
-        float g = (float) BGR_G(renderer->drawColor) / 255.0f;
-        float b = (float) BGR_B(renderer->drawColor) / 255.0f;
-
         glBindTexture(GL_TEXTURE_2D, gl->whiteTexture);
 
         glBegin(GL_TRIANGLES);
-            glColor4f(r, g, b, renderer->drawAlpha);
+            glColor4f((float) BGR_R(color1) / 255.0f, (float) BGR_G(color1) / 255.0f, (float) BGR_B(color1) / 255.0f, alpha);
             glTexCoord2f(0.5f, 0.5f);
-            glVertex2f(x1 , y1); 
+            glVertex2f(x1 , y1);
 
-            glColor4f(r, g, b, renderer->drawAlpha);
+            glColor4f((float) BGR_R(color2) / 255.0f, (float) BGR_G(color2) / 255.0f, (float) BGR_B(color2) / 255.0f, alpha);
             glTexCoord2f(0.5f, 0.5f);
-            glVertex2f(x2, y2); 
+            glVertex2f(x2, y2);
 
-            glColor4f(r, g, b, renderer->drawAlpha);
+            glColor4f((float) BGR_R(color3) / 255.0f, (float) BGR_G(color3) / 255.0f, (float) BGR_B(color3) / 255.0f, alpha);
             glTexCoord2f(0.5f, 0.5f);
-            glVertex2f(x3, y3); 
+            glVertex2f(x3, y3);
         glEnd();
     }
 }

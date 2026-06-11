@@ -79,7 +79,7 @@ typedef struct {
     void (*drawRectangle)(Renderer* renderer, float x1, float y1, float x2, float y2, uint32_t color, float alpha, bool outline);
     void (*drawRectangleColor)(Renderer* renderer, float x1, float y1, float x2, float y2, uint32_t color1, uint32_t color2, uint32_t color3, uint32_t color4, float alpha, bool outline);
     void (*drawLine)(Renderer* renderer, float x1, float y1, float x2, float y2, float width, uint32_t color, float alpha);
-    void (*drawTriangle)(Renderer *renderer, float x1, float y1, float x2, float y2, float x3, float y3, bool outline);
+    void (*drawTriangle)(Renderer *renderer, float x1, float y1, float x2, float y2, float x3, float y3, uint32_t color1, uint32_t color2, uint32_t color3, float alpha, bool outline);
     void (*drawLineColor)(Renderer* renderer, float x1, float y1, float x2, float y2, float width, uint32_t color1, uint32_t color2, float alpha);
     void (*drawText)(Renderer* renderer, const char* text, float x, float y, float xscale, float yscale, float angleDeg, float lineSeparation);
     void (*drawTextColor)(Renderer* renderer, const char* text, float x, float y, float xscale, float yscale, float angleDeg, int32_t c1, int32_t c2, int32_t c3, int32_t c4, float alpha, float lineSeparation);
@@ -666,8 +666,8 @@ static inline int32_t Renderer_normalizeCirclePrecision(int32_t precision) {
 }
 
 // draw_circle helper: approximates a circle as a polygon with "circlePrecision" segments.
-// Filled: triangle fan from center. Outline: line strip around the perimeter.
-static inline void Renderer_drawCircle(Renderer* renderer, float cx, float cy, float radius, bool outline) {
+// Filled: triangle fan from center (center = col1, perimeter = col2). Outline: line strip around the perimeter.
+static inline void Renderer_drawCircleColor(Renderer* renderer, float cx, float cy, float radius, uint32_t col1, uint32_t col2, bool outline) {
     int32_t segments = Renderer_normalizeCirclePrecision(renderer->circlePrecision);
     if (4 > segments) segments = 4;
 
@@ -681,12 +681,16 @@ static inline void Renderer_drawCircle(Renderer* renderer, float cx, float cy, f
         float curY = cy + radius * sinf(angle);
 
         if (outline) {
-            renderer->vtable->drawLine(renderer, prevX, prevY, curX, curY, 1.0f, renderer->drawColor, renderer->drawAlpha);
+            renderer->vtable->drawLine(renderer, prevX, prevY, curX, curY, 1.0f, col2, renderer->drawAlpha);
         } else {
-            renderer->vtable->drawTriangle(renderer, cx, cy, prevX, prevY, curX, curY, false);
+            renderer->vtable->drawTriangle(renderer, cx, cy, prevX, prevY, curX, curY, col1, col2, col2, renderer->drawAlpha, false);
         }
 
         prevX = curX;
         prevY = curY;
     }
+}
+
+static inline void Renderer_drawCircle(Renderer* renderer, float cx, float cy, float radius, bool outline) {
+    Renderer_drawCircleColor(renderer, cx, cy, radius, renderer->drawColor, renderer->drawColor, outline);
 }

@@ -2123,14 +2123,14 @@ static void gsDrawTextColor(Renderer* renderer, const char* text, float x, float
     }
 }
 
-static void gsDrawTriangle(Renderer *renderer, float x1, float y1, float x2, float y2, float x3, float y3, bool outline)
+static void gsDrawTriangle(Renderer *renderer, float x1, float y1, float x2, float y2, float x3, float y3, uint32_t color1, uint32_t color2, uint32_t color3, float alpha, bool outline)
 {
     GsRenderer* gs = (GsRenderer*) renderer;
     if(outline)
     {
-        gsDrawLine(renderer, x1, y1, x2, y2, 1, renderer->drawColor, 1.0);
-        gsDrawLine(renderer, x2, y2, x3, y3, 1, renderer->drawColor, 1.0);
-        gsDrawLine(renderer, x3, y3, x1, y1, 1, renderer->drawColor, 1.0);
+        gsDrawLine(renderer, x1, y1, x2, y2, 1, color1, alpha);
+        gsDrawLine(renderer, x2, y2, x3, y3, 1, color2, alpha);
+        gsDrawLine(renderer, x3, y3, x1, y1, 1, color3, alpha);
     } else {
         float sx1 = (x1 - (float) gs->viewX) * gs->scaleX + gs->offsetX;
         float sy1 = (y1 - (float) gs->viewY) * gs->scaleY + gs->offsetY;
@@ -2139,12 +2139,11 @@ static void gsDrawTriangle(Renderer *renderer, float x1, float y1, float x2, flo
         float sx3 = (x3 - (float) gs->viewX) * gs->scaleX + gs->offsetX;
         float sy3 = (y3 - (float) gs->viewY) * gs->scaleY + gs->offsetY;
 
-        float r = (float) BGR_R(renderer->drawColor);
-        float g = (float) BGR_G(renderer->drawColor);
-        float b = (float) BGR_B(renderer->drawColor);
-
-        u64 triColor = GS_SETREG_RGBAQ(r, g, b, alphaToGS(renderer->drawAlpha), 0x00);
-        gsKit_prim_triangle_gouraud_3d(gs->gsGlobal, sx1, sy1, 0,sx2, sy2, 0,sx3, sy3, 0,triColor, triColor, triColor);
+        uint8_t a = alphaToGS(alpha);
+        u64 triColor1 = GS_SETREG_RGBAQ(BGR_R(color1), BGR_G(color1), BGR_B(color1), a, 0x00);
+        u64 triColor2 = GS_SETREG_RGBAQ(BGR_R(color2), BGR_G(color2), BGR_B(color2), a, 0x00);
+        u64 triColor3 = GS_SETREG_RGBAQ(BGR_R(color3), BGR_G(color3), BGR_B(color3), a, 0x00);
+        gsKit_prim_triangle_gouraud_3d(gs->gsGlobal, sx1, sy1, 0,sx2, sy2, 0,sx3, sy3, 0,triColor1, triColor2, triColor3);
     }
 }
 
