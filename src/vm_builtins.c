@@ -11366,6 +11366,7 @@ static RValue builtin_layer_background_create(VMContext* ctx, RValue* args, MAYB
     el.type = RuntimeLayerElementType_Background;
     el.visible = true;
     el.alpha = 1.0f;
+    el.blend = 0xFFFFFFu;
     el.backgroundElement = bg;
     arrput(runtimeLayer->elements, el);
     return RValue_makeReal((GMLReal) el.id);
@@ -11589,6 +11590,23 @@ static RValue builtin_layer_sprite_get_angle(VMContext* ctx, RValue* args, MAYBE
     return RValue_makeReal((GMLReal) el->spriteElement->rotation);
 }
 
+static RValue builtin_layer_sprite_get_alpha(VMContext* ctx, RValue* args, MAYBE_UNUSED int32_t argCount) {
+    Runner* runner = ctx->runner;
+    int32_t id = RValue_toInt32(args[0]);
+    RuntimeLayerElement* el = Runner_findLayerElementById(runner, id, nullptr);
+    if (el == nullptr || el->type != RuntimeLayerElementType_Sprite || el->spriteElement == nullptr)
+        return RValue_makeReal(0.0);
+    return RValue_makeReal(el->alpha);
+}
+
+static RValue builtin_layer_sprite_get_blend(VMContext* ctx, RValue* args, MAYBE_UNUSED int32_t argCount) {
+    Runner* runner = ctx->runner;
+    int32_t id = RValue_toInt32(args[0]);
+    RuntimeLayerElement* el = Runner_findLayerElementById(runner, id, nullptr);
+    if (el == nullptr || el->type != RuntimeLayerElementType_Sprite || el->spriteElement == nullptr)
+        return RValue_makeReal(0.0);
+    return RValue_makeReal((GMLReal) el->blend);
+}
 
 static RValue builtin_layer_sprite_get_x(VMContext* ctx, RValue* args, MAYBE_UNUSED int32_t argCount) {
     Runner* runner = ctx->runner;
@@ -14185,6 +14203,8 @@ void VMBuiltins_registerAll(VMContext* ctx) {
     VM_registerBuiltin(ctx, "layer_sprite_get_speed", builtin_layer_sprite_get_speed);
     VM_registerBuiltin(ctx, "layer_sprite_get_index", builtin_layer_sprite_get_index);
     VM_registerBuiltin(ctx, "layer_sprite_get_angle", builtin_layer_sprite_get_angle);
+    VM_registerBuiltin(ctx, "layer_sprite_get_alpha", builtin_layer_sprite_get_alpha);
+    VM_registerBuiltin(ctx, "layer_sprite_get_blend", builtin_layer_sprite_get_blend);
     VM_registerBuiltin(ctx, "layer_sprite_destroy", builtin_layer_sprite_destroy);
     VM_registerBuiltin(ctx, "layer_tile_visible", builtin_layer_tile_visible);
 #if IS_WAD17_OR_HIGHER_ENABLED

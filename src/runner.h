@@ -220,7 +220,8 @@ typedef struct {
     uint32_t id;
     RuntimeLayerElementType type;
     bool visible;
-    float alpha;
+    float alpha; // GameMaker-HTML5's m_imageAlpha
+    uint32_t blend; // GameMaker-HTML5's m_imageBlend
     RuntimeBackgroundElement* backgroundElement; // owned; nullptr if type != Background
     RuntimeSpriteElement* spriteElement; // owned; nullptr if type != Sprite
     RoomTile* tileElement; // borrowed, points into RoomLayerAssetsData->legacyTiles; nullptr if type != Tile

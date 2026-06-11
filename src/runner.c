@@ -888,8 +888,8 @@ void Runner_draw(Runner* runner) {
                     Renderer_drawSpriteExt(
                         runner->renderer, spr->spriteIndex, (int32_t) spr->frameIndex,
                         (float) spr->x + layerOffsetX, (float) spr->y + layerOffsetY, spr->scaleX,
-                        spr->scaleY, spr->rotation, spr->color,
-                        1.0);
+                        spr->scaleY, spr->rotation, el->blend,
+                        el->alpha);
                 }
             } else if(parsedLayer->type == RoomLayerType_Background) {
                 if (runner->renderer == nullptr) return;
@@ -1378,7 +1378,8 @@ static void initRoom(Runner* runner, int32_t roomIndex) {
             el.id = Runner_getNextLayerId(runner);
             el.type = RuntimeLayerElementType_Sprite;
             el.visible = true;
-            el.alpha = 1.0f;
+            el.alpha = (float) BGR_A(spriteElement->color) / 255.0f;
+            el.blend = spriteElement->color & 0xFFFFFFu;
             el.spriteElement = spriteElement;
             arrput(runtimeLayer->elements, el);
         }
@@ -1390,6 +1391,7 @@ static void initRoom(Runner* runner, int32_t roomIndex) {
             el.type = RuntimeLayerElementType_Tile;
             el.visible = true;
             el.alpha = tile->alpha;
+            el.blend = tile->color & 0xFFFFFFu;
             el.backgroundElement = nullptr;
             el.spriteElement = nullptr;
             el.tileElement = tile;
