@@ -704,19 +704,29 @@ static void parseSPRT(BinaryReader* reader, DataWin* dw, bool skipLoadingPrecise
             spr->specialType = true;
             spr->sVersion = BinaryReader_readUint32(reader);
             spr->sSpriteType = BinaryReader_readUint32(reader);
-            if (DataWin_isVersionAtLeast(dw, 2, 0, 0, 0)) {
-                spr->gms2PlaybackSpeed = BinaryReader_readFloat32(reader);
-                spr->gms2PlaybackSpeedType = BinaryReader_readUint32(reader);
-                if (spr->sVersion >= 2) {
-                    BinaryReader_skip(reader, 4); //sequenceOffset;
-                    if (spr->sVersion >= 3) {
-                       nineSliceOffset = BinaryReader_readUint32(reader);
-                    }
+            if (spr->sSpriteType == 0) {
+                // Normal "special" sprite, technically only used for GameMaker: Studio 2+, but some modding tools (like UndertaleModTool) may inject special sprite types,
+                // even though the data.win is NOT GM:S 2+
+                if (DataWin_isVersionAtLeast(dw, 2, 0, 0, 0)) {
+                    spr->gms2PlaybackSpeed = BinaryReader_readFloat32(reader);
+                    spr->gms2PlaybackSpeedType = BinaryReader_readUint32(reader);
+                    if (spr->sVersion >= 2) {
+                        BinaryReader_skip(reader, 4); //sequenceOffset;
+                        if (spr->sVersion >= 3) {
+                            nineSliceOffset = BinaryReader_readUint32(reader);
+                        }
+                    } check = BinaryReader_readUint32(reader);
+                } else {
+                    // Technically should NEVER happen on legit data.wins
+                    check = 0;
                 }
-                check = BinaryReader_readUint32(reader);
             } else {
-                // For anything else, a special sprite means that there isn't any textures associated with it
-                check = 0;
+                fprintf(stderr, "DataWin: Detected special sprite type %u (%s), but we don't support it yet!\n", spr->sSpriteType, spr->sSpriteType == 2 ? "Spine" : spr->sSpriteType == 1 ? "SWF" : "Unknown");
+                spr->textureCount = 0;
+                spr->tpagIndices = nullptr;
+                spr->maskCount = 0;
+                spr->masks = nullptr;
+                continue;
             }
         }
 
