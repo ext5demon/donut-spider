@@ -132,9 +132,8 @@ add_library(stb_ds INTERFACE)
 target_include_directories(stb_ds SYSTEM INTERFACE ${CMAKE_SOURCE_DIR}/vendor/stb/ds)
 
 # stb_vorbis
-add_library(stb_vorbis STATIC vendor/stb/vorbis/stb_vorbis.c)
-target_include_directories(stb_vorbis PUBLIC vendor/bzip2)
-target_compile_options(stb_vorbis PRIVATE -w)
+add_library(stb_vorbis INTERFACE)
+target_include_directories(stb_vorbis SYSTEM INTERFACE ${CMAKE_SOURCE_DIR}/vendor/stb/vorbis)
 
 # RFC 1321 reference MD5 implementation
 target_sources(butterscotch PRIVATE vendor/md5/md5.c)
@@ -602,6 +601,8 @@ elseif(PLATFORM STREQUAL "ps3")
 
     find_package(SDL2 REQUIRED)
     target_include_directories(butterscotch PRIVATE ${SDL2_INCLUDE_DIRS})
+    # mojoal calls SDL atomics/threads, so SDL2 must link after it (static link order)
+    target_link_libraries(mojoal PUBLIC ${SDL2_LIBRARIES})
     target_link_libraries(butterscotch PRIVATE ${SDL2_LIBRARIES} m gcm_sys rsx sysutil io audio rt lv2 io audio bzip2 stb_ds sha1 ps3gl mojoal stb_vorbis)
 else()
     message(FATAL_ERROR "Unknown platform! ${PLATFORM}")
