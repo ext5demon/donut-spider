@@ -13645,10 +13645,8 @@ static RValue builtin_gpu_set_blendmode_ext(VMContext* ctx, RValue* args, int32_
     return RValue_makeUndefined();
 }
 
-static bool isBlendEnable = false;
 static RValue builtin_gpu_set_blendenable(VMContext* ctx, RValue* args, int32_t argCount) {
     bool enable = RValue_toBool(args[0]);
-    isBlendEnable = enable;
     ctx->runner->renderer->vtable->gpuSetBlendEnable(ctx->runner->renderer, enable);
     return RValue_makeUndefined();
 }
