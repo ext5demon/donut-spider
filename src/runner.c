@@ -1103,7 +1103,7 @@ static void applyFreeCamera(Runner* runner, int32_t* viewX, int32_t* viewY, int3
     *viewY = (int32_t) (centerY - zoomedH * 0.5f);
 }
 
-void Runner_drawViews(Runner* runner, int32_t gameW, int32_t gameH, float displayScaleX, float displayScaleY, bool debugShowCollisionMasks) {
+void Runner_drawViews(Runner* runner, int32_t gameW, int32_t gameH, bool debugShowCollisionMasks) {
     Renderer* renderer = runner->renderer;
     bool anyViewRendered = false;
 
@@ -1147,10 +1147,10 @@ void Runner_drawViews(Runner* runner, int32_t gameW, int32_t gameH, float displa
             expandViewAxis(camera->viewX, camera->viewWidth, gameW, widescreenBaseW, &viewX, &viewW);
             expandViewAxis(camera->viewY, camera->viewHeight, gameH, widescreenBaseH, &viewY, &viewH);
             applyFreeCamera(runner, &viewX, &viewY, &viewW, &viewH);
-            int32_t portX = (int32_t) ((float) view->portX * displayScaleX + 0.5f);
-            int32_t portY = (int32_t) ((float) view->portY * displayScaleY + 0.5f);
-            int32_t portW = (int32_t) ((float) view->portWidth * displayScaleX + 0.5f);
-            int32_t portH = (int32_t) ((float) view->portHeight * displayScaleY + 0.5f);
+            int32_t portX = (int32_t) ((float) view->portX * runner->displayScaleX + 0.5f);
+            int32_t portY = (int32_t) ((float) view->portY * runner->displayScaleY + 0.5f);
+            int32_t portW = (int32_t) ((float) view->portWidth * runner->displayScaleX + 0.5f);
+            int32_t portH = (int32_t) ((float) view->portHeight * runner->displayScaleY + 0.5f);
             float viewAngle = camera->viewAngle;
 
             runner->viewCurrent = (int32_t) vi;
@@ -3840,10 +3840,43 @@ int32_t Runner_surfaceGetTarget(Runner* runner) {
     return runner->surfaceStack[top];
 }
 
-void Runner_beginFrame(Runner* runner, int32_t gameW, int32_t gameH, int32_t windowW, int32_t windowH) {
+void Runner_beginFrame(
+    Runner* runner,
+    int32_t gameW,
+    int32_t gameH,
+    int32_t windowW,
+    int32_t windowH,
+    int32_t framebufferW,
+    int32_t framebufferH
+) {
     Renderer* renderer = runner->renderer;
+
+    // The application surface (FBO) is sized to defaultWindowWidth x defaultWindowHeight.
+    // It is a bit hard to understand, but here's how it works:
+    // The Port X/Port Y controls the position of the game viewport within the application surface.
+    // The Port W/Port H controls the size of the game viewport within the application surface.
+    // Think of it like if you had an image (or... well, a framebuffer) and you are "pasting" it over the application surface.
+    // And the Port W/Port H are scaled by the window size too (set by the GEN8 chunk)
+    Runner_computeViewDisplayScale(runner, gameW, gameH, &runner->displayScaleX, &runner->displayScaleY);
+
+    // Calculate viewport (letterboxing) in screen coordinates for mouse mapping
+    int32_t scaledW, scaledH;
+    if ((gameW * windowH) / gameH < windowW) {
+        scaledW = (gameW * windowH) / gameH;
+        scaledH = windowH;
+    } else {
+        scaledW = windowW;
+        scaledH = (gameH * windowW) / gameW;
+    }
+
+    runner->viewportX = (windowW - scaledW) / 2;
+    runner->viewportY = (windowH - scaledH) / 2;
+    runner->viewportW = scaledW;
+    runner->viewportH = scaledH;
+    runner->renderGameW = gameW;
+    runner->renderGameH = gameH;
     runner->applicationSurfaceId = renderer->vtable->ensureApplicationSurface(renderer, gameW, gameH);
-    renderer->vtable->beginFrame(renderer, gameW, gameH, windowW, windowH);
+    renderer->vtable->beginFrame(renderer, gameW, gameH, framebufferW, framebufferH);
 }
 
 // ===[ State Dump ]===

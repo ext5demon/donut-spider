@@ -1576,41 +1576,17 @@ int main(int argc, char* argv[]) {
                     }
                 }
 
-                // The application surface (FBO) is sized to defaultWindowWidth x defaultWindowHeight.
-                // It is a bit hard to understand, but here's how it works:
-                // The Port X/Port Y controls the position of the game viewport within the application surface.
-                // The Port W/Port H controls the size of the game viewport within the application surface.
-                // Think of it like if you had an image (or... well, a framebuffer) and you are "pasting" it over the application surface.
-                // And the Port W/Port H are scaled by the window size too (set by the GEN8 chunk)
-                float displayScaleX;
-                float displayScaleY;
-
                 Runner_drawPre(runner, fbWidth, fbHeight);
-                Runner_computeViewDisplayScale(runner, gameW, gameH, &displayScaleX, &displayScaleY);
-
-                runner->renderGameW = gameW;
-                runner->renderGameH = gameH;
 
                 // Calculate viewport (letterboxing) in screen coordinates for mouse mapping
-                int32_t winW, winH, scaledW, scaledH;
+                int32_t winW, winH;
                 platformGetScaledWindowSize(&winW, &winH);
-                if ((gameW * winH) / gameH < winW) {
-                    scaledW = (gameW * winH) / gameH;
-                    scaledH = winH;
-                } else {
-                    scaledW = winW;
-                    scaledH = (gameH * winW) / gameW;
-                }
-                runner->viewportX = (winW - scaledW) / 2;
-                runner->viewportY = (winH - scaledH) / 2;
-                runner->viewportW = scaledW;
-                runner->viewportH = scaledH;
+
+                Runner_beginFrame(runner, gameW, gameH, winW, winH, fbWidth, fbHeight);
 
                 double mx, my;
                 platformGetMousePos(&mx, &my);
                 Runner_updateMousePosition(runner, winW, winH, mx, my);
-
-                Runner_beginFrame(runner, gameW, gameH, fbWidth, fbHeight);
 
                 // Clear FBO with room background color
 #ifdef ENABLE_SW_RENDERER
@@ -1635,7 +1611,7 @@ int main(int argc, char* argv[]) {
                 }
 #endif
 
-                Runner_drawViews(runner, gameW, gameH, displayScaleX, displayScaleY, debugShowCollisionMasks);
+                Runner_drawViews(runner, gameW, gameH, debugShowCollisionMasks);
                 renderer->vtable->endFrameInit(renderer);
                 Runner_drawPost(runner, fbWidth, fbHeight);
                 renderer->vtable->endFrameEnd(renderer);

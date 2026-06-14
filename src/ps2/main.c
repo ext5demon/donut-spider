@@ -646,7 +646,7 @@ int main(int argc, char* argv[]) {
         gsKit_clear(gsGlobal, GS_SETREG_RGBAQ(0x00, 0x00, 0x00, 0x80, 0x00));
 
         Runner_drawPre(runner, 640, 448);
-        Runner_beginFrame(runner, gameW, gameH, 640, 448);
+        Runner_beginFrame(runner, gameW, gameH, 640, 448, 640, 448);
 
         // Clear with room background color
         if (runner->drawBackgroundColor) {
@@ -660,7 +660,7 @@ int main(int argc, char* argv[]) {
 
         // Render views
         u64 drawStartTime = GetTimerSystemTime();
-        Runner_drawViews(runner, gameW, gameH, 1.0f, 1.0f, false);
+        Runner_drawViews(runner, gameW, gameH, false);
         runner->viewCurrent = 0;
         renderer->vtable->endFrameInit(renderer);
         Runner_drawPost(runner, 640, 448);
