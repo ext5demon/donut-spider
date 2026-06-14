@@ -670,6 +670,16 @@ static void parseAGRP(BinaryReader* reader, DataWin* dw) {
         if (diff >= 8) {
             DataWin_bumpVersionTo(dw, 2024, 14, 0, 0);
         }
+    } else if (count == 1) {
+        // If there's only one entry, we CAN'T figure out easily based on the pointer diffs
+        // But here's the trick: We can read it twice, if the path is null for the FIRST audiogroup, then it is NOT 2024.14
+        BinaryReader_seek(reader, ptrs[0]);
+        const char* name = readStringPtr(reader, dw);
+        const char* path = readStringPtr(reader, dw);
+
+        if (strcmp(name, "audiogroup_default") == 0 && path != nullptr) {
+            DataWin_bumpVersionTo(dw, 2024, 14, 0, 0);
+        }
     }
 
     repeat(count, i) {
