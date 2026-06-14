@@ -52,15 +52,12 @@ static SoundInstance* findFreeSlot(MaAudioSystem* ma) {
     return best;
 }
 
+static bool isValidSoundInstanceId(int32_t instanceId) {
+    return AUDIO_STREAM_INDEX_BASE > instanceId && instanceId >= SOUND_INSTANCE_ID_BASE;
+}
+
 static SoundInstance* findInstanceById(MaAudioSystem* ma, int32_t instanceId) {
-    int32_t slotIndex;
-
-    if (instanceId >= AUDIO_STREAM_INDEX_BASE) {
-        slotIndex = instanceId - AUDIO_STREAM_INDEX_BASE;
-    } else {
-        slotIndex = instanceId - SOUND_INSTANCE_ID_BASE;
-    }
-
+    int32_t slotIndex = instanceId - SOUND_INSTANCE_ID_BASE;
     if (0 > slotIndex || slotIndex >= MAX_SOUND_INSTANCES)
         return nullptr;
 
@@ -442,7 +439,7 @@ static void maSetSoundGain(AudioSystem* audio, int32_t soundOrInstance, float ga
         // We want it to "fallthrough" to the check below so that any playing instances are updated
     }
 
-    if (soundOrInstance >= SOUND_INSTANCE_ID_BASE) {
+    if (isValidSoundInstanceId(soundOrInstance)) {
         SoundInstance* inst = findInstanceById(ma, soundOrInstance);
         if (inst != nullptr) {
             if (timeMs == 0) {
@@ -458,19 +455,27 @@ static void maSetSoundGain(AudioSystem* audio, int32_t soundOrInstance, float ga
             }
         }
     } else {
-        repeat(MAX_SOUND_INSTANCES, i) {
-            SoundInstance* inst = &ma->instances[i];
-            if (inst->active && inst->soundIndex == soundOrInstance) {
-                if (timeMs == 0) {
-                    inst->currentGain = gain;
-                    inst->targetGain = gain;
-                    inst->fadeTimeRemaining = 0.0f;
-                    ma_sound_set_volume(&inst->maSound, gain);
-                } else {
-                    inst->startGain = inst->currentGain;
-                    inst->targetGain = gain;
-                    inst->fadeTotalTime = (float) timeMs / 1000.0f;
-                    inst->fadeTimeRemaining = inst->fadeTotalTime;
+        // Before GameMaker 2024.11+, you could NOT change the audio of a streamed OGG file because it went through a path that did NOT support
+        // setting the gain of the audio
+        //
+        // Here's a fun fact for you: https://x.com/MrPowerGamerBR/status/2066291262970356037
+        //
+        // Thanks YoYo!!!
+        if (AUDIO_STREAM_INDEX_BASE > soundOrInstance || DataWin_isVersionAtLeast(audio->dw, 2024, 11, 0, 0)) {
+            repeat(MAX_SOUND_INSTANCES, i) {
+                SoundInstance* inst = &ma->instances[i];
+                if (inst->active && inst->soundIndex == soundOrInstance) {
+                    if (timeMs == 0) {
+                        inst->currentGain = gain;
+                        inst->targetGain = gain;
+                        inst->fadeTimeRemaining = 0.0f;
+                        ma_sound_set_volume(&inst->maSound, gain);
+                    } else {
+                        inst->startGain = inst->currentGain;
+                        inst->targetGain = gain;
+                        inst->fadeTotalTime = (float) timeMs / 1000.0f;
+                        inst->fadeTimeRemaining = inst->fadeTotalTime;
+                    }
                 }
             }
         }
@@ -492,7 +497,7 @@ static float maGetSoundGain(AudioSystem* audio, int32_t soundOrInstance) {
         // We want it to "fallthrough" to the check below so that any playing instances are retrieved
     }
 
-    if (soundOrInstance >= SOUND_INSTANCE_ID_BASE) {
+    if (isValidSoundInstanceId(soundOrInstance)) {
         SoundInstance* inst = findInstanceById(ma, soundOrInstance);
         if (inst != nullptr) return inst->currentGain;
     } else {
@@ -521,7 +526,7 @@ static void maSetSoundPitch(AudioSystem* audio, int32_t soundOrInstance, float p
         // We want it to "fallthrough" to the check below so that any playing instances are updated
     }
 
-    if (soundOrInstance >= SOUND_INSTANCE_ID_BASE) {
+    if (isValidSoundInstanceId(soundOrInstance)) {
         SoundInstance* inst = findInstanceById(ma, soundOrInstance);
         if (inst != nullptr) {
             ma_sound_set_pitch(&inst->maSound, pitch);
@@ -551,7 +556,7 @@ static float maGetSoundPitch(AudioSystem* audio, int32_t soundOrInstance) {
         // We want it to "fallthrough" to the check below so that any playing instances are retrieved
     }
 
-    if (soundOrInstance >= SOUND_INSTANCE_ID_BASE) {
+    if (isValidSoundInstanceId(soundOrInstance)) {
         SoundInstance* inst = findInstanceById(ma, soundOrInstance);
         if (inst != nullptr) return ma_sound_get_pitch(&inst->maSound);
     } else {
