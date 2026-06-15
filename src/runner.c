@@ -1910,7 +1910,7 @@ void Runner_reset(Runner* runner) {
     runner->drawableListSortDirty = false;
 }
 
-static int32_t compareTargetObjectIndexAscending(const void *a, const void *b) {
+static int compareTargetObjectIndexAscending(const void *a, const void *b) {
     FlattenedCollisionEvent* flat1 = (FlattenedCollisionEvent*) a;
     FlattenedCollisionEvent* flat2 = (FlattenedCollisionEvent*) b;
     if (flat1->targetObjectIndex > flat2->targetObjectIndex)
