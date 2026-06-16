@@ -340,6 +340,7 @@ typedef struct {
 
 // ===[ SHDR - Shaders ]===
 typedef struct {
+    bool present;
     const char* name;
     uint32_t type;
     const char* glslES_Vertex;

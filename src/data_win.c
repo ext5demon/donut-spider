@@ -1067,28 +1067,20 @@ static void parseGLOB(BinaryReader* reader, DataWin* dw) {
 static void parseSHDR(BinaryReader* reader, DataWin* dw) {
     Shdr* s = &dw->shdr;
 
-    uint32_t count;
-    uint32_t* ptrs = readPointerTable(reader, &count);
+    uint32_t* ptrs = readPointerTable(reader, &s->count);
+    s->shaders = safeMalloc(s->count * sizeof(Shader));
 
-    // Some GameMaker games emit a SHDR chunk with all zero pointers, in this case, we'll just consider that it isn't a real shader and drop it.
-    if (ptrs != nullptr) {
-        uint32_t realCount = 0;
-        repeat(count, i) {
-            if (ptrs[i] != 0) {
-                ptrs[realCount] = ptrs[i];
-                realCount++;
-            }
+    repeat(s->count, i) {
+        // Some GameMaker games have a nullptr for the shader, so we'll just mark them as not-present...
+        if (ptrs[i] == 0) {
+            Shader* sh = &s->shaders[i];
+            sh->present = false;
+            continue;
         }
-        count = realCount;
-    }
-    s->count = count;
 
-    if (count == 0) { free(ptrs); s->shaders = nullptr; return; }
-
-    s->shaders = safeMalloc(count * sizeof(Shader));
-    repeat(count, i) {
         BinaryReader_seek(reader, ptrs[i]);
         Shader* sh = &s->shaders[i];
+        sh->present = true;
         sh->name = readStringPtr(reader, dw);
         sh->type = BinaryReader_readUint32(reader) & 0x7FFFFFFF;
         sh->glslES_Vertex = readStringPtr(reader, dw);
