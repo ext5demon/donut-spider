@@ -2910,6 +2910,15 @@ static void dispatchMouseEvents(Runner* runner) {
     arrsetlen(runner->instanceSnapshots, snapshotBase);
 }
 
+static int sortInstancesByObjectIndexThenInstanceIdAscending(const void* element1, const void* element2) {
+    Instance* instance1 = *(Instance**) element1;
+    Instance* instance2 = *(Instance**) element2;
+
+    if (instance1->objectIndex != instance2->objectIndex) return instance1->objectIndex > instance2->objectIndex ? 1 : -1;
+    if (instance1->instanceId != instance2->instanceId) return instance1->instanceId > instance2->instanceId ? 1 : -1;
+    return 0;
+}
+
 static void dispatchCollisionEvents(Runner* runner) {
     DataWin* dataWin = runner->dataWin;
     // Iterate only the objects that have any collision event in their parent chain.
@@ -2947,6 +2956,10 @@ static void dispatchCollisionEvents(Runner* runner) {
                 // Iterate only the descendant-inclusive list for the target object via a snapshot, so nested user code (collision handlers calling instance_exists, with (...), etc.) can push/pop their own snapshots above ours without corrupting this iteration.
                 int32_t snapBase = Runner_pushInstancesOfObject(runner, targetObjIndex);
                 int32_t snapEnd = (int32_t) arrlen(runner->instanceSnapshots);
+
+                // The YoYo Runner sorts it by the object index THEN by the instanceId
+                qsort(runner->instanceSnapshots + snapBase, snapEnd - snapBase, sizeof(Instance*), sortInstancesByObjectIndexThenInstanceIdAscending);
+
                 for (int32_t snapIdx = snapBase; snapEnd > snapIdx; snapIdx++) {
                     Instance* other = runner->instanceSnapshots[snapIdx];
                     if (!other->active) continue;
