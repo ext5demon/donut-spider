@@ -30,11 +30,11 @@ class Flowey : CliktCommand() {
 
         testLoop@for (test in testSuiteConfig.tests) {
             if (test.commercialGame && skipCommercialGames) {
-                testResults[test.name] = TestResult(0, emptyList(), emptyList()).apply { state = TestResult.State.SKIPPED }
+                testResults[test.name] = TestResult(Instant.now(), 0, emptyList(), emptyList()).apply { state = TestResult.State.SKIPPED }
                 continue
             }
             println("Executing \"${test.name}\"")
-            val start = Instant.now()
+            val startedAt = Instant.now()
             val process = ProcessBuilder(butterscotchPath.absolutePath, *test.butterscotchArgs.toTypedArray())
                 .directory(testSuite.parentFile)
                 .start()
@@ -66,7 +66,7 @@ class Flowey : CliktCommand() {
             val stdoutLines = stdoutBuilder.toString().lines()
             val stderrLines = stderrBuilder.toString().lines()
 
-            val result = TestResult(process.exitValue(), stdoutLines, stderrLines)
+            val result = TestResult(startedAt, process.exitValue(), stdoutLines, stderrLines)
             result.endedAt = Instant.now()
             testResults[test.name] = result
 
@@ -159,6 +159,7 @@ class Flowey : CliktCommand() {
     fun formatDuration(start: Instant, end: Instant): String {
         val d = Duration.between(start, end)
         return buildList {
+            println(d)
             if (d.toHoursPart() > 0) add("${d.toHoursPart()}h")
             if (d.toMinutesPart() > 0) add("${d.toMinutesPart()}m")
             if (d.toSecondsPart() > 0) add("${d.toSecondsPart()}s")
@@ -167,12 +168,12 @@ class Flowey : CliktCommand() {
     }
 
     class TestResult(
+        val startedAt: Instant,
         var exitCode: Int,
         var stdoutLines: List<String>,
         var stderrLines: List<String>
     ) {
         var state = State.FAILURE
-        val startedAt = Instant.now()
         var endedAt: Instant? = null
 
         enum class State {
