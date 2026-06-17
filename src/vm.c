@@ -1404,31 +1404,35 @@ static void handlePop(VMContext* ctx, uint8_t type1, uint8_t type2, uint32_t var
     if (varType == VARTYPE_ARRAY) {
         Variable* varDef = resolveVarDef(ctx, varRef);
         if (varDef->varID == VARIABLE_BUILTIN) {
-            // Resolve target instance for built-in array variable writes (e.g. obj_foo.alarm[0] = 2)
-            if (instanceType >= 0 && INSTANCE_ID_BASE > instanceType) {
-                // Object reference: write to ALL instances of that object. The setter can run user code, so iterate a snapshot of the bucket.
-                Runner* runner = (Runner*) ctx->runner;
-                Instance* savedInstance = (Instance*) ctx->currentInstance;
-                int32_t snapBase = Runner_pushInstancesOfObject(runner, instanceType);
-                int32_t snapEnd  = (int32_t) arrlen(runner->instanceSnapshots);
-                for (int32_t i = snapBase; snapEnd > i; i++) {
-                    Instance* inst = runner->instanceSnapshots[i];
-                    if (!inst->active) continue;
-                    VMBuiltins_setVariable(ctx, inst, varDef->builtinVarId, varDef->name, val, arrayIndex);
+            // Resolve target instance for built-in array variable writes
+            if (instanceType >= 0) {
+                if (INSTANCE_ID_BASE > instanceType) {
+                    // Object reference: write to ALL instances of that object. The setter can run user code, so iterate a snapshot of the bucket.
+                    Runner* runner = (Runner*) ctx->runner;
+                    Instance* savedInstance = (Instance*) ctx->currentInstance;
+                    int32_t snapBase = Runner_pushInstancesOfObject(runner, instanceType);
+                    int32_t snapEnd  = (int32_t) arrlen(runner->instanceSnapshots);
+                    for (int32_t i = snapBase; snapEnd > i; i++) {
+                        Instance* inst = runner->instanceSnapshots[i];
+                        if (!inst->active)
+                            continue;
+
+                        VMBuiltins_setVariable(ctx, inst, varDef->builtinVarId, varDef->name, val, arrayIndex);
 #ifdef ENABLE_VM_TRACING
-                    VM_checkIfVariableShouldBeTracedAndLog(ctx, instanceObjectName(ctx, inst), "self", varDef->name, val, true, arrayIndex, inst->instanceId, " (builtin, all-instances object write)");
+                        VM_checkIfVariableShouldBeTracedAndLog(ctx, instanceObjectName(ctx, inst), "self", varDef->name, val, true, arrayIndex, inst->instanceId, " (builtin, all-instances object write)");
 #endif
-                }
-                Runner_popInstanceSnapshot(runner, snapBase);
-                ctx->currentInstance = savedInstance;
-            } else if (instanceType >= 0) {
-                // Instance ID reference
-                Instance* target = findInstanceByTarget(ctx, instanceType);
-                if (target != nullptr) {
-                    VMBuiltins_setVariable(ctx, target, varDef->builtinVarId, varDef->name, val, arrayIndex);
+                    }
+                    Runner_popInstanceSnapshot(runner, snapBase);
+                    ctx->currentInstance = savedInstance;
+                } else {
+                    // Instance ID reference
+                    Instance* target = findInstanceByTarget(ctx, instanceType);
+                    if (target != nullptr) {
+                        VMBuiltins_setVariable(ctx, target, varDef->builtinVarId, varDef->name, val, arrayIndex);
 #ifdef ENABLE_VM_TRACING
-                    VM_checkIfVariableShouldBeTracedAndLog(ctx, instanceObjectName(ctx, target), "self", varDef->name, val, true, arrayIndex, target->instanceId, " (builtin)");
+                        VM_checkIfVariableShouldBeTracedAndLog(ctx, instanceObjectName(ctx, target), "self", varDef->name, val, true, arrayIndex, target->instanceId, " (builtin)");
 #endif
+                    }
                 }
             } else if (instanceType == INSTANCE_OTHER && ctx->otherInstance != nullptr) {
                 VMBuiltins_setVariable(ctx, ctx->otherInstance, varDef->builtinVarId, varDef->name, val, arrayIndex);
