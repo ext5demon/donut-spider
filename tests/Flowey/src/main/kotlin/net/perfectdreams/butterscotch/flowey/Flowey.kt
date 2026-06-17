@@ -11,12 +11,14 @@ import com.github.ajalt.clikt.parameters.types.int
 import com.typesafe.config.ConfigFactory
 import kotlinx.serialization.hocon.Hocon
 import kotlinx.serialization.hocon.decodeFromConfig
+import java.awt.Color
 import java.io.File
 import java.time.Duration
 import java.time.Instant
 import java.util.concurrent.TimeUnit
 import javax.imageio.ImageIO
 import kotlin.concurrent.thread
+import kotlin.math.abs
 import kotlin.system.exitProcess
 
 class Flowey : CliktCommand() {
@@ -70,54 +72,56 @@ class Flowey : CliktCommand() {
             result.endedAt = Instant.now()
             testResults[test.name] = result
 
-            if (process.exitValue() != 0) {
-                result.state = TestResult.State.Failure("Exit Status is not 0!")
-                continue@testLoop
-            }
+            try {
+                if (process.exitValue() != 0)
+                    error("Exit Status is not 0!")
 
-            for (pack in test.expectedStdoutOutput) {
-                if (stdoutLines.windowed(pack.size).indexOf(pack) == -1) {
-                    result.state = TestResult.State.Failure("Stdout does not contain required lines!")
-                    continue@testLoop
-                }
-            }
-
-            for (pack in test.expectedStderrOutput) {
-                if (stderrLines.windowed(pack.size).indexOf(pack) == -1) {
-                    result.state = TestResult.State.Failure("Stderr does not contain required lines!")
-                    continue@testLoop
-                }
-            }
-
-            for (pack in test.expectedScreenshots) {
-                val expected = File(testSuite.parentFile, pack.expected)
-                val actual = File(testSuite.parentFile, pack.actual)
-
-                if (!expected.exists() || !actual.exists()) {
-                    result.state = TestResult.State.Failure("Expected or actual image does not exist!")
-                    continue@testLoop
+                for (pack in test.expectedStdoutOutput) {
+                    if (stdoutLines.windowed(pack.size).indexOf(pack) == -1)
+                        error("Stdout does not contain required lines!")
                 }
 
-                val expectedImage = ImageIO.read(expected)
-                val actualImage = ImageIO.read(actual)
+                for (pack in test.expectedStderrOutput) {
+                    if (stderrLines.windowed(pack.size).indexOf(pack) == -1)
+                        error("Stderr does not contain required lines!")
+                }
 
-                if (expectedImage.width != actualImage.width || expectedImage.height != actualImage.height)
-                    continue@testLoop
+                for (pack in test.expectedScreenshots) {
+                    val expected = File(testSuite.parentFile, pack.expected)
+                    val actual = File(testSuite.parentFile, pack.actual)
 
-                for (y in 0 until expectedImage.height) {
-                    for (x in 0 until expectedImage.width) {
-                        val expectedPixel = expectedImage.getRGB(x, y)
-                        val actualPixel = actualImage.getRGB(x, y)
+                    if (!expected.exists() || !actual.exists())
+                        error("Expected or actual image does not exist!")
 
-                        if (expectedPixel != actualPixel) {
-                            result.state = TestResult.State.Failure("Pixel ($x, $y) is different!")
-                            continue@testLoop
+                    val expectedImage = ImageIO.read(expected)
+                    val actualImage = ImageIO.read(actual)
+
+                    if (expectedImage.width != actualImage.width || expectedImage.height != actualImage.height)
+                        error("Image size mismatch!")
+
+                    for (y in 0 until expectedImage.height) {
+                        for (x in 0 until expectedImage.width) {
+                            val expectedPixel = expectedImage.getRGB(x, y)
+                            val actualPixel = actualImage.getRGB(x, y)
+
+                            val expectedColor = Color(expectedPixel)
+                            val actualColor = Color(actualPixel)
+
+                            val differenceR = abs(expectedColor.red - actualColor.red)
+                            val differenceG = abs(expectedColor.green - actualColor.green)
+                            val differenceB = abs(expectedColor.blue - actualColor.blue)
+
+                            // Sometimes the image can be a *bit* different because of differences in GPU drivers
+                            if (differenceR > 1 || differenceG > 1 || differenceB > 1)
+                                error("Pixel ($x, $y) is different in ${pack.actual}! ${Color(expectedPixel)} != ${Color(actualPixel)} (difference: $differenceR, $differenceG, $differenceB)")
                         }
                     }
                 }
-            }
 
-            result.state = TestResult.State.Success
+                result.state = TestResult.State.Success
+            } catch (e: IllegalStateException) {
+                result.state = TestResult.State.Failure("${e.message}")
+            }
         }
 
         val failedTests = testResults.filter { it.value.state is TestResult.State.Failure }
