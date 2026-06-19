@@ -2710,7 +2710,7 @@ static RValue builtin_move_snap(VMContext* ctx, RValue* args, MAYBE_UNUSED int32
 static RValue builtin_move_wrap(VMContext* ctx, RValue* args, MAYBE_UNUSED int32_t argCount) {
     bool hor = RValue_toBool(args[0]);
     bool vert = RValue_toBool(args[1]);
-    GMLReal margin = RValue_toReal(args[1]);
+    GMLReal margin = RValue_toReal(args[2]);
     Instance* inst = ctx->currentInstance;
     if (hor) {
         if (inst->x < -margin) {
