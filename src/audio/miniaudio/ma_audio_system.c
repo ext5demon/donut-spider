@@ -707,6 +707,8 @@ static void maGroupLoad(AudioSystem* audio, int32_t groupIndex) {
         if (!fileSystem->vtable->fileExists(fileSystem, buf)) {
             fprintf(stderr, "Audio: Wanted to load Audio Group %d, but Audio Group %d does not exist in the file system!\n", groupIndex, groupIndex);
             free(buf);
+            DataWin* dw = safeCalloc(1, sizeof(DataWin));
+            arrput(audio->audioGroups, dw);
             return;
         }
 
