@@ -4363,6 +4363,27 @@ static RValue builtin_ds_list_insert(VMContext* ctx, RValue* args, int32_t argCo
     return RValue_makeUndefined();
 }
 
+static RValue builtin_ds_list_copy(VMContext* ctx, RValue* args, int32_t argCount) {
+    Runner* runner = ctx->runner;
+    int32_t destinationId = RValue_toInt32(args[0]);
+    int32_t sourceId = RValue_toInt32(args[1]);
+    DsList* destinationList = dsListGet(runner, destinationId);
+    if (destinationList == nullptr) return RValue_makeUndefined();
+    DsList* sourceList = dsListGet(runner, sourceId);
+    if (sourceList == nullptr) return RValue_makeUndefined();
+
+    repeat(arrlen(destinationList->items), i) {
+        RValue_free(&destinationList->items[i]);
+    }
+
+    arrsetlen(destinationList->items, 0);
+    repeat(arrlen(sourceList->items), i) {
+        arrput(destinationList->items, RValue_makeIndependent(sourceList->items[i]));
+    }
+
+    return RValue_makeUndefined();
+}
+
 static RValue builtin_ds_list_delete(VMContext* ctx, RValue* args, int32_t argCount) {
     Runner* runner = (Runner*) ctx->runner;
     int32_t id = RValue_toInt32(args[0]);
@@ -15594,6 +15615,7 @@ void VMBuiltins_registerAll(VMContext* ctx) {
     VM_registerBuiltin(ctx, "ds_list_write", builtin_ds_list_write);
     VM_registerBuiltin(ctx, "ds_list_read", builtin_ds_list_read);
     VM_registerBuiltin(ctx, "ds_list_replace", builtin_ds_list_replace);
+    VM_registerBuiltin(ctx, "ds_list_copy", builtin_ds_list_copy);
 
     // ds_grid
     VM_registerBuiltin(ctx, "ds_grid_create", builtin_ds_grid_create);
