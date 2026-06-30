@@ -104,12 +104,6 @@ endif()
 # Platform specific files builds
 file(GLOB PLATFORM_SOURCES src/${PLATFORM}/*.c)
 
-# OpenGL ES 3.0 / WebGL2 compatibility
-option(ENABLE_GLES "Build the gl_renderer against OpenGL ES 3.0 / WebGL2 instead of desktop GL 4.1 Core" OFF)
-if (ENABLE_GLES AND ENABLE_LEGACY_GL)
-    set(ENABLE_LEGACY_GL OFF)
-endif()
-
 if(PLATFORM STREQUAL "android")
     add_library(butterscotch SHARED ${SOURCES} ${PLATFORM_SOURCES} ${AUDIO_SOURCES})
 else()
