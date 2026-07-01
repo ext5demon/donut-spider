@@ -61,7 +61,7 @@ check() {
     configlog "checking $1"
     shift
     output="$output_exe"
-    [ -n "$nolink" ] && output="$compile_obj $output_obj" && unset nolink
+    [ -n "$nolink" ] && output="$compile_obj $output_obj" && nolink=
     printf 'cmd: %s\n' "$CC $cflags tmp/test.c ${output}tmp/a.out $*" >> tmp/config.log
     if $CC $cflags tmp/test.c ${output}tmp/a.out "$@" >> tmp/config.log 2>&1; then
         printyes
