@@ -4358,5 +4358,7 @@ void Runner_free(Runner* runner) {
     RunnerKeyboard_free(runner->keyboard);
     RunnerGamepad_free(runner->gamepads);
     RunnerMouse_free(runner->mouse);
+    if (runner->windowTitle)
+        free(runner->windowTitle);
     free(runner);
 }
