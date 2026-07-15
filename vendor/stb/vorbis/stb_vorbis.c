@@ -1401,7 +1401,7 @@ static int set_file_offset(stb_vorbis *f, unsigned int loc)
    #endif
    f->eof = 0;
    if (USE_MEMORY(f)) {
-      if (f->stream_start + loc >= f->stream_end || f->stream_start + loc < f->stream_start) {
+      if (loc >= f->stream_len) {
          f->stream = f->stream_end;
          f->eof = 1;
          return 0;
@@ -5083,7 +5083,7 @@ stb_vorbis * stb_vorbis_open_file(FILE *file, int close_on_free, int *error, con
 stb_vorbis * stb_vorbis_open_filename(const char *filename, int *error, const stb_vorbis_alloc *alloc)
 {
    FILE *f;
-#if defined(_WIN32) && defined(__STDC_WANT_SECURE_LIB__)
+#if defined(_WIN32) && defined(__STDC_WANT_SECURE_LIB__) && defined(_MSC_VER) && _MSC_VER >= 1400
    if (0 != fopen_s(&f, filename, "rb"))
       f = NULL;
 #else

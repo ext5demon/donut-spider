@@ -1,177 +1,222 @@
-.SUFFIXES:
+# Makefile build
+# meant to be extremely portable to weird unix-like systems
 
-ifeq ($(strip $(PS3DEV)),)
-  ifeq ($(strip $(DEVKITPS3)),)
-    export PS3DEV := /usr/local/ps3dev
-  else
-    export PS3DEV := $(DEVKITPS3)
-  endif
+CC := cc
+
+empty :=
+space := $(empty) $(empty)
+
+ifeq ($(filter clean distclean,$(MAKECMDGOALS)),)
+
+-include compat/config.mk
+
+ifndef DISABLE_MMD
+DEPFLAGS = -MMD -MP -MF $(@:.$(OBJ_EXT)=.d)
 endif
 
-ifeq ($(strip $(PSL1GHT)),)
-$(error Please set PSL1GHT in your environment)
+# trigger configure re-run if $(CC) changes
+_dummy := $(shell \
+	printf '$(CC)' > compat/tmp/cc-new; \
+	cmp -s compat/tmp/cc-new compat/tmp/cc || \
+	mv compat/tmp/cc-new compat/tmp/cc; \
+	rm -f compat/tmp/cc-new \
+)
+
 endif
 
-PROJECT_ROOT := $(realpath $(dir $(lastword $(MAKEFILE_LIST))))
-export PROJECT_ROOT
+DEFINES += $(DEFINE)ENABLE_VM_GML_PROFILER \
+		   $(DEFINE)ENABLE_VM_OPCODE_PROFILER \
+		   $(DEFINE)ENABLE_VM_STUB_LOGS \
+		   $(DEFINE)ENABLE_VM_TRACING
+INCLUDES += $(INCLUDE). \
+		    $(INCLUDE)src \
+		    $(INCLUDE)vendor/stb/ds \
+		    $(INCLUDE)src/image \
+		    $(INCLUDE)vendor/stb/image \
+		    $(INCLUDE)vendor/stb/vorbis \
+		    $(INCLUDE)vendor/md5 \
+		    $(INCLUDE)vendor/sha1 \
+		    $(INCLUDE)vendor/base64 \
+		    $(INCLUDE)vendor/bzip2
 
-export PATH             := $(PS3DEV)/bin:$(PS3DEV)/ppu/bin:$(PATH)
-export PORTLIBS         := $(PS3DEV)/portlibs/ppu
-export LIBPSL1GHT_INC   := -I$(PSL1GHT)/ppu/include -I$(PSL1GHT)/ppu/include/simdmath
-export LIBPSL1GHT_LIB   := -L$(PSL1GHT)/ppu/lib
+HEADERS := $(wildcard src/*.h) $(shell find vendor -name '*.h')
+SRCS := $(wildcard src/*.c) $(wildcard src/image/*.c) $(wildcard vendor/bzip2/*.c) vendor/md5/md5.c vendor/sha1/sha1.c vendor/base64/base64.c
 
-TARGET      := butterscotch
-BUILD       := build_ps3
+DESKTOP_BACKEND := glfw3
+AUDIO_BACKEND := miniaudio
 
-SOURCES 	:= \
-	src/core \
-	src/data \
-	src/engine \
-	src/fs \
-	src/input \
-	src/renderer \
-	src/audio \
-	src/platform/ps3 \
-	src/platform/ps3/rsx
-
-DATA :=
-INCLUDES := \
-	$(shell find $(PROJECT_ROOT)/src -type d) \
-	$(PROJECT_ROOT)/ps3gl/include \
-	$(PROJECT_ROOT)/vendor/stb/ds \
-	$(PROJECT_ROOT)/vendor/stb/image
-
-PKGFILES    := $(PROJECT_ROOT)/PKG_TEMPLATE
-PKG_USRDIR  := $(PKGFILES)/USRDIR
-DATA_WIN    ?= $(PROJECT_ROOT)/data.win
-
-TITLE ?= Butterscotch
-APPID ?= BTSC00001
-MIN_VER     := 460
-ATTRIBUTES  := 0x32
-CONTENTID   := UP0001-$(APPID)_00-0000000000000000
-ICON0       := $(PROJECT_ROOT)/PKG_TEMPLATE/ICON0.PNG
-SFOXML      := $(PS3DEV)/bin/sfo.xml
-
-CFLAGS      := -O2 -Wall -Wextra -mcpu=cell -mhard-float \
-               -fmodulo-sched -ffunction-sections -fdata-sections -fno-builtin \
-               -D__PPU__ -D__PS3__ -D__CELLOS_LV2__ \
-			   -DPS3_DATA_WIN_PATH=\"/dev_hdd0/game/$(APPID)/USRDIR/data.win\" \
-               $(MACHDEP) $(INCLUDE)
-
-CXXFLAGS    := $(CFLAGS)
-
-LDFLAGS     := $(MACHDEP) -mcpu=cell -mhard-float -Wl,-Map,$(notdir $@).map
-
-PS3GL_LOCAL_LIB := $(PROJECT_ROOT)/libs/ps3gl/libPS3GL.a
-
-ifeq ($(wildcard $(PS3GL_LOCAL_LIB)),)
-$(error Missing PS3GL library at $(PS3GL_LOCAL_LIB))
-endif
-
-LIBS := $(PS3GL_LOCAL_LIB) -lsimdmath -lrsx -lgcm_sys -lnet -lsysutil -lsysfs -lio -lm -lrt -llv2 -lc
-LIBDIRS := $(PORTLIBS)
-
-include $(PSL1GHT)/ppu_rules
-
-ifneq ($(BUILD),$(notdir $(CURDIR)))
-
-export OUTPUT   := $(PROJECT_ROOT)/$(TITLE)
-
-export VPATH    := $(foreach dir,$(SOURCES),$(PROJECT_ROOT)/$(dir)) \
-                   $(foreach dir,$(DATA),$(PROJECT_ROOT)/$(dir))
-
-export DEPSDIR  := $(PROJECT_ROOT)/$(BUILD)
-export BUILDDIR := $(PROJECT_ROOT)/$(BUILD)
-
-CFILES      := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(PROJECT_ROOT)/$(dir)/*.c)))
-CFILES      := $(filter-out ps3gl.c ffp_shader_fpo.c ffp_shader_vpo.c,$(CFILES))
-CPPFILES    := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(PROJECT_ROOT)/$(dir)/*.cpp)))
-sFILES      := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(PROJECT_ROOT)/$(dir)/*.s)))
-SFILES      := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(PROJECT_ROOT)/$(dir)/*.S)))
-
-
-ifeq ($(strip $(CPPFILES)),)
-export LD := $(CC)
+ifdef SPIDER_DONUT_COMMIT_DATE
+DEFINES += $(DEFINE)SPIDER_DONUT_COMMIT_DATE=\"$(SPIDER_DONUT_COMMIT_DATE)\"
 else
-export LD := $(CXX)
+DEFINES += $(DEFINE)SPIDER_DONUT_COMMIT_DATE=\"unknown\"
+endif
+ifdef SPIDER_DONUT_COMMIT_HASH
+DEFINES += $(DEFINE)SPIDER_DONUT_COMMIT_HASH=\"$(SPIDER_DONUT_COMMIT_HASH)\"
+else
+DEFINES += $(DEFINE)SPIDER_DONUT_COMMIT_HASH=\"unknown\"
 endif
 
-export OFILES   := $(addsuffix .o,$(BINFILES)) \
-                   $(CPPFILES:.cpp=.o) $(CFILES:.c=.o) \
-                   $(sFILES:.s=.o) $(SFILES:.S=.o)
+ifndef DISABLE_WAD14
+DEFINES += $(DEFINE)ENABLE_WAD14
+endif
 
-export INCLUDE  := $(foreach dir,$(INCLUDES),-I$(dir)) \
-                   $(foreach dir,$(LIBDIRS),-I$(dir)/include) \
-                   $(LIBPSL1GHT_INC) \
-                   -I$(PROJECT_ROOT)/$(BUILD)
+ifndef DISABLE_WAD16
+DEFINES += $(DEFINE)ENABLE_WAD16
+endif
 
-export LIBPATHS := $(foreach dir,$(LIBDIRS),-L$(dir)/lib) \
-                   $(LIBPSL1GHT_LIB)
+ifndef DISABLE_WAD17
+DEFINES += $(DEFINE)ENABLE_WAD17
+endif
 
-.PHONY: all elf self pkg clean rebuild assets check_data_win
+# TODO: add support for non-desktop backends
+SRCS += $(wildcard src/desktop/*.c) src/desktop/backends/$(DESKTOP_BACKEND).c
+ifeq ($(OS),Windows)
+PKG_CONFIG_FLAGS := --static
+endif
+INCLUDES += $(INCLUDE)src/desktop
+ifeq ($(DESKTOP_BACKEND),glfw3)
+GLFW3_LIBS += $(shell pkg-config $(PKG_CONFIG_FLAGS) --libs glfw3)
+LIBS += $(GLFW3_LIBS)
+DEFINES += $(DEFINE)USE_GLFW3
+ENABLE_GLAD := 1
+endif
+ifeq ($(DESKTOP_BACKEND),glfw2)
+GLFW2_LIBS += $(shell pkg-config $(PKG_CONFIG_FLAGS) --libs libglfw)
+LIBS += $(GLFW2_LIBS)
+DEFINES += $(DEFINE)USE_GLFW2
+ENABLE_GLAD := 1
+endif
+ifeq ($(DESKTOP_BACKEND),sdl1)
+SDL1_LIBS += $(shell pkg-config $(PKG_CONFIG_FLAGS) --libs sdl)
+LIBS += $(SDL1_LIBS)
+DEFINES += $(DEFINE)USE_SDL1
+endif
+ifeq ($(DESKTOP_BACKEND),sdl2)
+SDL2_LIBS += $(shell pkg-config $(PKG_CONFIG_FLAGS) --libs sdl2)
+LIBS += $(SDL2_LIBS)
+DEFINES += $(DEFINE)USE_SDL2
+endif
+ifeq ($(DESKTOP_BACKEND),sdl3)
+SDL3_LIBS += $(shell pkg-config $(PKG_CONFIG_FLAGS) --libs sdl3)
+LIBS += $(SDL3_LIBS)
+DEFINES += $(DEFINE)USE_SDL3
+endif
 
-all: $(BUILD)
 
-$(BUILD):
-	@[ -d $@ ] || mkdir -p $@
-	@$(MAKE) -C $(BUILD) -f $(PROJECT_ROOT)/Makefile
+# GNU make doesn't have a way to do OR in conditionals, stupid language for clowns
+ifndef DISABLE_LEGACY_GL
+ENABLE_GL := 1
+endif
+ifndef DISABLE_MODERN_GL
+ENABLE_GL := 1
+endif
 
+ifdef ENABLE_GL
+SRCS += $(wildcard src/gl_common/*.c)
+INCLUDES += $(INCLUDE)src/gl_common $(INCLUDE)src/gl
+HEADERS += $(wildcard src/gl_common/*.h)
+ENABLE_GLAD := 1
+endif
 
-$(PKG_USRDIR):
-	@mkdir -p $@
+ifndef DISABLE_LEGACY_GL
+DEFINES += $(DEFINE)ENABLE_LEGACY_GL
+SRCS += $(wildcard src/gl_legacy/*.c)
+INCLUDES += $(INCLUDE)src/gl_legacy
+HEADERS += $(wildcard src/gl_legacy/*.h) $(wildcard src/gl/*.h)
+endif
 
-check_data_win:
-	@if [ ! -f "$(DATA_WIN)" ]; then \
-		echo "Missing data.win at $(DATA_WIN). Use 'make pkg DATA_WIN=/path/to/data.win'."; \
-		exit 1; \
-	fi
+ifndef DISABLE_MODERN_GL
+DEFINES += $(DEFINE)ENABLE_MODERN_GL
+SRCS += $(wildcard src/gl/*.c)
+HEADERS += $(wildcard src/gl/*.h)
+endif
 
-assets: check_data_win | $(PKG_USRDIR)
-	cp "$(DATA_WIN)" "$(PKG_USRDIR)/data.win"
+ifdef DISABLE_WAD14
+ifdef DISABLE_WAD16
+ifdef DISABLE_WAD17
+$(error must enable at least 1 bytecode version)
+endif
+endif
+endif
 
-elf: $(BUILD)
-	@$(MAKE) -C $(BUILD) -f $(PROJECT_ROOT)/Makefile $(OUTPUT).elf
+ifdef DISABLE_LEGACY_GL
+ifdef DISABLE_MODERN_GL
+$(error must enable at least 1 renderer)
+endif
+endif
 
-self: $(BUILD)
-	@$(MAKE) -C $(BUILD) -f $(PROJECT_ROOT)/Makefile $(OUTPUT).self
+ifeq ($(AUDIO_BACKEND),miniaudio)
+INCLUDES += $(INCLUDE)src/audio/miniaudio $(INCLUDE)vendor/miniaudio
+DEFINES += $(DEFINE)USE_MINIAUDIO
+SRCS += $(wildcard src/audio/miniaudio/*.c)
+HEADERS += $(wildcard src/audio/miniaudio/*.h)
+ifneq ($(OS),Windows)
+LIBS += -pthread
+endif
+endif
+ifeq ($(AUDIO_BACKEND),openal)
+INCLUDES += $(INCLUDE)src/audio/openal
+DEFINES += $(DEFINE)USE_OPENAL
+SRCS += $(wildcard src/audio/openal/*.c)
+HEADERS += $(wildcard src/audio/openal/*.h)
+ifeq ($(OS),Darwin)
+LIBS += -framework OpenAL
+else
+LIBS += -lopenal
+endif
+endif
 
-pkg: assets $(BUILD)
-	@$(MAKE) -C $(BUILD) -f $(PROJECT_ROOT)/Makefile \
-		$(OUTPUT).pkg \
-		TITLE="$(TITLE)" \
-		APPID="$(APPID)" \
-		MIN_VER="$(MIN_VER)" \
-		ATTRIBUTES="$(ATTRIBUTES)" \
-		CONTENTID="$(CONTENTID)" \
-		ICON0="$(ICON0)" \
-		SFOXML="$(SFOXML)"
+ifdef ENABLE_GLAD
+SRCS += vendor/glad/src/glad.c
+INCLUDES += $(INCLUDE)vendor/glad/include
+endif
+
+ifeq ($(OS),Windows)
+ifndef MSVC
+LIBS += -static
+LIBS += -lwinmm
+else
+LIBS += winmm.lib
+DEFINES += $(DEFINE)_CRT_SECURE_NO_WARNINGS
+endif
+DEFINES += $(DEFINE)WIN32_LEAN_AND_MEAN
+else
+ifeq ($(OS),Darwin)
+LIBS += -lobjc
+else
+LIBS += -lm
+endif
+endif
+
+ifndef VERBOSE
+V := @
+endif
+
+OBJS := $(addprefix build/,$(SRCS:.c=.c.$(OBJ_EXT)))
+
+all: build/spider-donut
+
+-include $(OBJS:.$(OBJ_EXT)=.d)
+
+ifeq ($(filter clean distclean,$(MAKECMDGOALS)),)
+
+compat/config.mk: compat/configure.sh compat/tmp/cc
+	@CC="$(CC)" $(SHELL) compat/configure.sh
+
+endif
+
+build/spider-donut: $(OBJS)
+	@{ [ -z "$(NO_COLOR)" ] && [ -t 1 ]; } && printf " \033[1;34mLD\033[0m spider-donut\n" || printf " LD spider-donut\n"
+	$(V)$(_CC) $(LDFLAGS) $(OBJS) $(LIBS) $(EXTRALIBS) $(OUTPUT_EXE)$@
+	@[ -f $@.exe ] && chmod +x $@.exe || true
+
+build/%.c.$(OBJ_EXT): %.c compat/config.mk $(if $(DISABLE_MMD),$(HEADERS))
+	@mkdir -p $(dir $@)
+	@{ [ -z "$(NO_COLOR)" ] && [ -t 1 ]; } && printf " \033[1;32mCC\033[0m $<\n" || printf " CC $<\n"
+	$(V)$(_CC) $(DEFINES) $(INCLUDES) $(CFLAGS) $(DEPFLAGS) $(COMPILE_OBJ) $< $(OUTPUT_OBJ)$@
+
 clean:
-	@echo clean ...
-	@rm -rf $(PROJECT_ROOT)/$(BUILD) \
-	        $(PROJECT_ROOT)/*.elf \
-	        $(PROJECT_ROOT)/*.self \
-	        $(PROJECT_ROOT)/*.fake.self \
-	        $(PROJECT_ROOT)/*.pkg \
-			$(PROJECT_ROOT)/*.gnpdrm.pkg \
-	        $(PKG_USRDIR)/data.win
+	rm -rf build
 
-test: $(BUILD)
-	@echo "===> Testing full compile pipeline (ephemeral)"
-	@$(MAKE) -C $(BUILD) -f $(PROJECT_ROOT)/Makefile $(OUTPUT).elf
-
-	@echo "Cleaning build artifacts..."
-	@rm -f "$(BUILD)/$(OUTPUT).elf"
-rebuild: clean all
-
-else
-
-DEPENDS := $(OFILES:.o=.d)
-
-$(OUTPUT).self: $(OUTPUT).elf
-$(OUTPUT).elf: $(OFILES)
-$(OUTPUT).pkg: $(OUTPUT).self
-
--include $(DEPENDS)
-
-endif
+distclean: clean
+	rm -f compat/config.mk compat/tmp/cc

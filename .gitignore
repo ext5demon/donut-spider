@@ -1,15 +1,8 @@
-# Build
-build_host/
-build_ps3/
-*.pkg
-*.self
-*.elf
-
-# Game data
-data.win
-
-# Other stuff
-.vscode
-.idea
-txtr.pack
-.devcontainer
+build*/
+.gitignore
+.cache
+CMakeUserPresets.json
+.devcontainer/
+compat/config.mk
+/.vs
+/dist/
