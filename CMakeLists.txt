@@ -701,6 +701,17 @@ elseif(PLATFORM STREQUAL "ps3")
     target_compile_definitions(mojoal PRIVATE AL_LIBTYPE_STATIC)
     target_compile_options(mojoal PRIVATE -w)
 
+    # GCC 7 cannot remap __FILE__, so give it a stable value.
+    set(PS3_PATH_FLAGS
+        "-D__FILE__=\"donut-spider\""
+        -Wno-builtin-macro-redefined
+        "-fdebug-prefix-map=${CMAKE_SOURCE_DIR}=."
+        "-fdebug-prefix-map=${CMAKE_BINARY_DIR}=./build"
+    )
+    foreach(PS3_TARGET spider_donut sha1 bzip2 ps3gl mojoal)
+        target_compile_options(${PS3_TARGET} PRIVATE ${PS3_PATH_FLAGS})
+    endforeach()
+
     # Donut Spider VM/interpreter profiler
     option(ENABLE_VM_GML_PROFILER "Enable Donut Spider VM/interpreter profiler" OFF)
     if(ENABLE_VM_GML_PROFILER)
@@ -739,9 +750,7 @@ elseif(PLATFORM STREQUAL "ps3")
     add_compile_definitions(AL_LIBTYPE_STATIC)
     option(DONUT_SPIDER_DEV_PRELOAD_WAD "Privately auto-load data.win beside EBOOT.BIN (never enable for public artifacts)" OFF)
     if(DONUT_SPIDER_DEV_PRELOAD_WAD)
-        # The preload switch is used only by the PS3 entry point. Keeping the
-        # definition source-local avoids recompiling the entire engine when a
-        # developer toggles a private WAD test build.
+        # Only main.c needs this; do not rebuild the whole runner when toggling it.
         set_property(SOURCE src/ps3/main.c APPEND PROPERTY COMPILE_DEFINITIONS DONUT_SPIDER_DEV_PRELOAD_WAD)
     endif()
 
@@ -757,17 +766,33 @@ elseif(PLATFORM STREQUAL "ps3")
         m gcm_sys rsx sysutil io audio rt lv2
     )
 
-    # PSL1GHT executables require a post-link pass to resolve their PRX import
-    # stubs. An unprocessed ELF still links successfully, but jumps into the
-    # stub's instruction bytes during C runtime initialization on RPCS3/PS3.
+    # Resolve PRX imports before stripping the ELF.
     find_program(SPRXLINKER_EXECUTABLE
         NAMES sprxlinker sprxlinker.exe
         HINTS "$ENV{PS3DEV}/bin"
         REQUIRED
     )
+    find_program(PPU_STRIP_EXECUTABLE
+        NAMES ppu-strip ppu-strip.exe powerpc64-ps3-elf-strip powerpc64-ps3-elf-strip.exe
+        HINTS "$ENV{PS3DEV}/ppu/bin"
+        REQUIRED
+    )
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    set(DONUT_SPIDER_BINARY_SANITIZER "${CMAKE_SOURCE_DIR}/tools/sanitize_binary_paths.py")
+    # MSYS Python treats drive-letter paths as relative.
+    file(RELATIVE_PATH DONUT_SPIDER_BINARY_SANITIZER_RELATIVE
+        "${CMAKE_BINARY_DIR}"
+        "${DONUT_SPIDER_BINARY_SANITIZER}"
+    )
+    set_property(TARGET spider_donut APPEND PROPERTY LINK_DEPENDS "${DONUT_SPIDER_BINARY_SANITIZER}")
     add_custom_command(TARGET spider_donut POST_BUILD
         COMMAND "${SPRXLINKER_EXECUTABLE}" "$<TARGET_FILE:spider_donut>"
-        COMMENT "Resolving PS3 PRX import stubs"
+        # Prebuilt libraries include their original debug paths.
+        COMMAND "${PPU_STRIP_EXECUTABLE}" --strip-debug "$<TARGET_FILE:spider_donut>"
+        # SDL still has build paths in rodata after stripping.
+        COMMAND "${Python3_EXECUTABLE}" "${DONUT_SPIDER_BINARY_SANITIZER_RELATIVE}" "$<TARGET_FILE_NAME:spider_donut>"
+        COMMENT "Finalizing PS3 ELF"
+        WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
         VERBATIM
     )
 else()

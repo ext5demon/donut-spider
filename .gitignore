@@ -1,8 +1,99 @@
+# Builds
 build*/
-.gitignore
-.cache
+cmake-build-*/
+out/
+dist/
+.cache/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
 CMakeUserPresets.json
+build.ninja
+.ninja_*
+
+# Compiled files
+*.o
+*.obj
+*.a
+*.lib
+*.dll
+*.exe
+*.pdb
+*.ilk
+*.exp
+*.elf
+*.self
+*.sprx
+*.pkg
+*.pkg.sha256
+EBOOT.BIN
+PARAM.SFO
+
+# Local game data and saves
+data.win
+audiogroup*.dat
+audiogroup*.bin
+TEXTURES.BIN
+chapter*_windows/
+filech*
+dr.ini
+keyconfig*.ini
+
+# RPCS3 files
+rpcs3/
+dev_hdd0/
+dev_hdd1/
+dev_flash/
+dev_flash2/
+dev_flash3/
+captures/
+screenshots/
+
+# Logs and crashes
+logs/
+*.log
+*.dmp
+core
+core.*
+gmon.out
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Editors and OS files
+.idea/
+.vscode/
+.vs/
 .devcontainer/
+*.suo
+*.user
+*.userprefs
+*.swp
+*.tmp
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.stackdump
+
+# Local config and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+credentials.json
+secrets.json
+
+# Generated compatibility config
 compat/config.mk
-/.vs
-/dist/

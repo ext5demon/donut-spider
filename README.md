@@ -70,6 +70,7 @@ You need:
 - a working [PSL1GHT/ps3dev](https://github.com/ps3dev/PSL1GHT) toolchain
 - PSL1GHT's PPU SDL2 portlib
 - CMake 3.21 or newer
+- Python 3 (used to scrub local build paths from the ELF)
 - Unix Makefiles or another CMake generator supported by your toolchain
 - PowerShell for the packaging script
 

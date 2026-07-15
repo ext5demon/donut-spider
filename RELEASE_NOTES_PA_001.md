@@ -12,6 +12,7 @@ The release includes the installable PS3 package. It does not contain a WAD, gam
 - sound effects, voices, streamed audio, and BSV video playback
 - mark-and-sweep collection for cyclic GML heap values
 - persistent per-session HDD logs with WAD details, room transitions, and runtime/memory heartbeats
+- local build paths and debug symbols stripped from the release binary
 
 ## Known problems
 
