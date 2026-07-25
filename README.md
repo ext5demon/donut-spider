@@ -2,7 +2,7 @@
 
 ![Donut Spider logo](assets/donut-spider-logo.png)
 
-**PA_001 — Pre-alpha**
+**PA_002 — Pre-alpha**
 
 Donut Spider is an experimental GameMaker bytecode runner with a PlayStation 3 backend. The current PS3 build focuses on WAD 17 games and keeping memory use inside the console's limits.
 
@@ -26,9 +26,9 @@ my-game/
 
 Donut Spider is unofficial and is not affiliated with Toby Fox, 8-4, GameMaker, or YoYo Games.
 
-## Installing PA_001 on PS3
+## Installing PA_002 on PS3
 
-1. Download `Donut-Spider-PA_001.pkg` from the GitHub release.
+1. Download `Donut-Spider-PA_002.pkg` from the GitHub release.
 2. Install it through Package Manager on a CFW or HEN-enabled PS3.
 3. Copy your private game bundle to the internal drive or a USB device.
 4. Launch **Donut Spider**.
@@ -54,12 +54,12 @@ Every launch creates a persistent session log in the app's `USRDIR/logs/` direct
 - L1 and R1: Page Down and Page Up
 - L2: F10
 
-## Known PA_001 problems
+## Known PA_002 problems
 
 - PS3 surface captures can lose their alpha channel. The Chapter 4 prophecy sequence is visibly broken and some captured sprites have black rectangles.
 - Heavy battles and effects can dip below their intended frame rate.
 - WAD 17 support does not mean every game or every room is supported. Missing GML functions, shaders, codecs, and platform behavior can still stop a run.
-- This build has had hands-on RPCS3 testing, but it has not completed enough hardware testing for a stable release.
+- Hardware testing is ongoing. We recently fixed RSX 64-byte pitch alignment crashes on bare metal, but there may still be other instability issues.
 
 Please include the version, game version, room name, and the last visible action when reporting a bug.
 
@@ -87,7 +87,7 @@ cmake -S . -B build-ps3-public -G 'Unix Makefiles' `
   -DENABLE_WAD14=OFF `
   -DENABLE_WAD16=OFF `
   -DENABLE_WAD17=ON `
-  -DDONUT_SPIDER_VERSION=PA_001 `
+  -DDONUT_SPIDER_VERSION=PA_002 `
   -DDONUT_SPIDER_DEV_BUILD=OFF `
   -DDONUT_SPIDER_DEV_PRELOAD_WAD=OFF
 
@@ -107,7 +107,7 @@ cmake -S . -B build-ps3-dev-release -G 'Unix Makefiles' `
   -DENABLE_WAD14=OFF `
   -DENABLE_WAD16=OFF `
   -DENABLE_WAD17=ON `
-  -DDONUT_SPIDER_VERSION=PA_001 `
+  -DDONUT_SPIDER_VERSION=PA_002 `
   -DDONUT_SPIDER_DEV_BUILD=ON `
   -DDONUT_SPIDER_DEV_PRELOAD_WAD=OFF
 
