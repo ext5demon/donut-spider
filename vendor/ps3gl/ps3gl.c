@@ -825,11 +825,11 @@ void glTexImage2D( GLenum target, GLint level,
 		case 3:
 		case GL_RGBA:
 		case 4:
-			currentTexture->gcmTexture.pitch = width*4;
+			currentTexture->gcmTexture.pitch = (width*4 + 63) & ~63;
 			break;
 		case GL_RED:
 		case 1:
-			currentTexture->gcmTexture.pitch = width; // one byte per texel
+			currentTexture->gcmTexture.pitch = (width + 63) & ~63;
 			break;
 	}
 
@@ -839,7 +839,9 @@ void glTexImage2D( GLenum target, GLint level,
 		{
 			if (currentTexture->data != NULL) rsxFree(currentTexture->data);
 			const uint8_t *src = (const uint8_t*)pixels;
-			const int textureSize = width*height*4;
+			const int textureSize = currentTexture->gcmTexture.pitch * height;
+			currentTexture->data = (uint8_t*)rsxMemalign(128, textureSize);
+			if (!currentTexture->data) return;
 			rsxAddressToOffset(currentTexture->data, &currentTexture->gcmTexture.offset);
 			currentTexture->gcmTexture.format = GCM_TEXTURE_FORMAT_A8R8G8B8|GCM_TEXTURE_FORMAT_LIN;
 			currentTexture->gcmTexture.remap  = (
@@ -854,12 +856,14 @@ void glTexImage2D( GLenum target, GLint level,
 			);
 
 			if(pixels) {
-				currentTexture->data = (uint8_t*)rsxMemalign(128, textureSize);
-				for(size_t i=0; i<width*height*4; i+=4) {
-					((uint8_t*)currentTexture->data)[i + 0] = 0xFF;   // A
-					((uint8_t*)currentTexture->data)[i + 1] = *src++; // R
-					((uint8_t*)currentTexture->data)[i + 2] = *src++; // G
-					((uint8_t*)currentTexture->data)[i + 3] = *src++; // B
+				for(size_t y=0; y<height; y++) {
+					uint8_t *dstRow = (uint8_t*)currentTexture->data + y * currentTexture->gcmTexture.pitch;
+					for(size_t x=0; x<width; x++) {
+						dstRow[x*4 + 0] = 0xFF;   // A
+						dstRow[x*4 + 1] = *src++; // R
+						dstRow[x*4 + 2] = *src++; // G
+						dstRow[x*4 + 3] = *src++; // B
+					}
 				}
 			}
 			break;
@@ -867,7 +871,9 @@ void glTexImage2D( GLenum target, GLint level,
 		case GL_RGBA:
 		{
 			if (currentTexture->data != NULL) rsxFree(currentTexture->data);
-			currentTexture->data = (uint8_t*)rsxMemalign(128, width*height*4);
+			const int textureSize = currentTexture->gcmTexture.pitch * height;
+			currentTexture->data = (uint8_t*)rsxMemalign(128, textureSize);
+			if (!currentTexture->data) return;
 			rsxAddressToOffset(currentTexture->data, &currentTexture->gcmTexture.offset);
 			currentTexture->gcmTexture.format = GCM_TEXTURE_FORMAT_A8R8G8B8|GCM_TEXTURE_FORMAT_LIN;
 			currentTexture->gcmTexture.remap  = (
@@ -881,7 +887,10 @@ void glTexImage2D( GLenum target, GLint level,
 						   (GCM_TEXTURE_REMAP_COLOR_B << GCM_TEXTURE_REMAP_COLOR_A_SHIFT)
 			);
 			if(pixels) {
-				memcpy((void*)currentTexture->data, pixels, width*height*4);
+				const uint8_t *src = (const uint8_t*)pixels;
+				for(size_t y=0; y<height; y++) {
+					memcpy((uint8_t*)currentTexture->data + y * currentTexture->gcmTexture.pitch, src + y * width * 4, width * 4);
+				}
 			}
 			break;
 		}
@@ -893,9 +902,15 @@ void glTexImage2D( GLenum target, GLint level,
 			}
 			if (currentTexture->data != NULL)
 				rsxFree(currentTexture->data);
-			const int textureSize = width * height; // one byte per texel
+			const int textureSize = currentTexture->gcmTexture.pitch * height;
 			currentTexture->data = (uint8_t*)rsxMemalign(128, textureSize);
-			memcpy((void*)currentTexture->data, pixels, textureSize);
+			if (!currentTexture->data) return;
+			if(pixels) {
+				const uint8_t *src = (const uint8_t*)pixels;
+				for(size_t y=0; y<height; y++) {
+					memcpy((uint8_t*)currentTexture->data + y * currentTexture->gcmTexture.pitch, src + y * width, width);
+				}
+			}
 			rsxAddressToOffset(currentTexture->data, &currentTexture->gcmTexture.offset);
 			// RSX stores B8 in the blue source channel.
 			// Remap so the shader reads (byte, 0, 0, 1) to match GL_RED's spec semantic.
