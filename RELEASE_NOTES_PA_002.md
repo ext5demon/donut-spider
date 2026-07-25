@@ -1,8 +1,13 @@
-# Donut Spider PA_001
+# Donut Spider PA_002
 
-This is the first public Pre-alpha build of Donut Spider for PlayStation 3.
+This is the second public Pre-alpha build of Donut Spider for PlayStation 3.
 
 The release includes the installable PS3 package. It does not contain a WAD, game assets, saves, or any other commercial game data. On first boot, choose **SELECT WAD** and browse to your own game bundle.
+
+## What's new in PA_002
+
+- Fixed RSX rendering crashes on bare metal hardware. Textures are now properly padded to 64-byte pitch requirements for `GL_RGB`, `GL_RGBA`, and `GL_RED`.
+- Added OOM (Out Of Memory) safety checks for RSX allocations.
 
 ## What works
 
