@@ -1,5 +1,6 @@
 #include "data_win.h"
 #include "binary_reader.h"
+#include "binary_utils.h"
 
 #include <stdbool.h>
 #include <stdio.h>
@@ -875,27 +876,42 @@ static void parseSPRT(BinaryReader* reader, DataWin* dw, bool skipLoadingPrecise
             uint32_t bytesPerRow = (spr->maskWidth + 7) / 8;
             uint32_t bytesPerMask = bytesPerRow * spr->maskHeight;
 
+            uint32_t totalMaskBytes = bytesPerMask * maskDataCount;
+            uint32_t remainder = totalMaskBytes % 4;
+            uint32_t paddedMaskBytes = totalMaskBytes + (remainder != 0 ? 4 - remainder : 0);
+
             if (spr->sepMasks == 1 || !skipLoadingPreciseMasksForNonPreciseSprites) {
                 spr->masks = (uint8_t **)safeMalloc(maskDataCount * sizeof(uint8_t*));
                 if (dw->mappedFile) {
+                    uint8_t* block = dw->mappedFile + BinaryReader_getPosition(reader);
+#if defined(IS_BIG_ENDIAN)
+                    uint8_t* swappedBlock = (uint8_t *)safeMalloc(paddedMaskBytes);
+                    memcpy(swappedBlock, block, paddedMaskBytes);
+                    BinaryUtils_bswap32_SIMD((uint32_t*)swappedBlock, paddedMaskBytes / 4);
                     repeat(maskDataCount, j) {
-                        spr->masks[j] = dw->mappedFile + BinaryReader_getPosition(reader);
+                        spr->masks[j] = swappedBlock + j * bytesPerMask;
                     }
+#else
+                    repeat(maskDataCount, j) {
+                        spr->masks[j] = block + j * bytesPerMask;
+                    }
+#endif
+                    BinaryReader_skip(reader, paddedMaskBytes);
                 } else {
+                    uint8_t* block = (uint8_t *)safeMalloc(paddedMaskBytes);
+                    BinaryReader_readBytes(reader, block, paddedMaskBytes);
+#if defined(IS_BIG_ENDIAN)
+                    BinaryUtils_bswap32_SIMD((uint32_t*)block, paddedMaskBytes / 4);
+#endif
                     repeat(maskDataCount, j) {
                         spr->masks[j] = (uint8_t *)safeMalloc(bytesPerMask);
-                        BinaryReader_readBytes(reader, spr->masks[j], bytesPerMask);
+                        memcpy(spr->masks[j], block + j * bytesPerMask, bytesPerMask);
                     }
+                    free(block);
                 }
             } else {
-                BinaryReader_skip(reader, bytesPerMask * maskDataCount);
+                BinaryReader_skip(reader, paddedMaskBytes);
                 spr->masks = nullptr;
-            }
-            // Pad the TOTAL mask data to 4-byte alignment (not per-mask)
-            uint32_t totalMaskBytes = bytesPerMask * maskDataCount;
-            uint32_t remainder = totalMaskBytes % 4;
-            if (remainder != 0) {
-                BinaryReader_skip(reader, 4 - remainder);
             }
         } else {
             spr->masks = nullptr;

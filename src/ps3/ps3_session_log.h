@@ -5,8 +5,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
+extern bool gPS3SessionLog_ForceDiskFlush;
+
 bool PS3SessionLog_open(const char* appDirectory);
 void PS3SessionLog_event(const char* format, ...);
+void PS3SessionLog_flushToDisk(void);
 void PS3SessionLog_heartbeat(const char* roomName, int32_t roomIndex, int32_t frame,
                              int32_t instances, int32_t structs, size_t heapBytes,
                              size_t textureBytes, size_t surfaceBytes);

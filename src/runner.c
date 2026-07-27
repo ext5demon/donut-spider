@@ -1161,13 +1161,20 @@ static void applyFreeCamera(Runner* runner, int32_t* viewX, int32_t* viewY, int3
 }
 
 void Runner_drawViews(Runner* runner, int32_t gameW, int32_t gameH, bool debugShowCollisionMasks) {
+    extern bool gPS3GL_DebugLogEnabled;
+    if (runner->frameCount == 1) {
+        gPS3GL_DebugLogEnabled = true;
+    }
+    
     Renderer* renderer = runner->renderer;
+    
+    PS3SessionLog_event("DRAW_VIEWS: clearScreen START");
     renderer->vtable->clearScreen(renderer, runner->drawBackgroundColor ? runner->backgroundColor : 0, 1.0f);
+    glFinish();
+    PS3SessionLog_event("DRAW_VIEWS: clearScreen END");
 
     bool anyViewRendered = false;
-
     bool viewsEnabled = runner->viewsEnabled;
-
     int32_t widescreenBaseW = gameW - runner->widescreenExtraWidth;
     int32_t widescreenBaseH = gameH - runner->widescreenExtraHeight;
 
@@ -1180,25 +1187,23 @@ void Runner_drawViews(Runner* runner, int32_t gameW, int32_t gameH, bool debugSh
             if (camera == nullptr) continue;
 
             bool toSurface = view->surfaceId != -1;
+            PS3SessionLog_event("DRAW_VIEWS: view %d START (toSurface=%d)", vi, toSurface);
 
             if (toSurface) {
-                // The surface is GONE, skip it!
-                if (!renderer->vtable->surfaceExists(renderer, view->surfaceId))
-                    continue;
-
+                if (!renderer->vtable->surfaceExists(renderer, view->surfaceId)) continue;
                 Runner_surfaceSetTarget(runner, view->surfaceId);
-
                 if (runner->drawBackgroundColor)
                     renderer->vtable->clearScreen(renderer, runner->currentRoom->backgroundColor, 1.0f);
-
                 runner->viewCurrent = (int32_t) vi;
                 runner->renderer->cameraCurrent = runner->views[runner->viewCurrent].cameraId;
                 runner->renderer->vtable->applyProjection(runner->renderer, &camera->viewMatrix, &camera->projectionMatrix);
-
+                
+                PS3SessionLog_event("DRAW_VIEWS: view %d DRAW START", vi);
                 Runner_draw(runner);
+                glFinish();
+                PS3SessionLog_event("DRAW_VIEWS: view %d DRAW END", vi);
 
                 renderer->vtable->flush(renderer);
-
                 Runner_surfaceResetTarget(runner);
                 anyViewRendered = true;
                 continue;
@@ -1216,14 +1221,20 @@ void Runner_drawViews(Runner* runner, int32_t gameW, int32_t gameH, bool debugSh
 
             runner->viewCurrent = (int32_t) vi;
             runner->renderer->cameraCurrent = runner->views[runner->viewCurrent].cameraId;
+            
+            PS3SessionLog_event("DRAW_VIEWS: view %d beginView START", vi);
             renderer->vtable->beginView(renderer, viewX, viewY, viewW, viewH, portX, portY, portW, portH, viewAngle);
+            glFinish();
+            PS3SessionLog_event("DRAW_VIEWS: view %d beginView END", vi);
 
+            PS3SessionLog_event("DRAW_VIEWS: view %d Runner_draw START", vi);
             Runner_draw(runner);
+            glFinish();
+            PS3SessionLog_event("DRAW_VIEWS: view %d Runner_draw END", vi);
 
             if (debugShowCollisionMasks) DebugOverlay_drawCollisionMasks(runner);
 
             renderer->vtable->endView(renderer);
-
             anyViewRendered = true;
         }
     }

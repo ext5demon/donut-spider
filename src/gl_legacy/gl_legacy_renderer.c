@@ -86,7 +86,9 @@ static void glApplyProjection(Renderer* renderer, const Matrix4f* viewMatrix, co
     renderer->gmlMatrices[MATRIX_WORLD_VIEW] = worldView;
     renderer->gmlMatrices[MATRIX_WORLD_VIEW_PROJECTION] = worldViewProjection;
 
+#ifndef PLATFORM_PS3
     Matrix4f_flipClipY(&projection);
+#endif
 
     glMatrixMode(GL_PROJECTION);
     glLoadMatrixf(projection.m);
@@ -203,6 +205,15 @@ static void glBeginFrame(Renderer* renderer, int32_t gameW, int32_t gameH, int32
     gl->gameH = gameH;
 
     // Bind the application_surface (sized/created by Runner_beginFrame's ensureApplicationSurface call right before this).
+#ifdef PLATFORM_PS3
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    gl->activeSurfaceId = RENDER_TARGET_HOST_FRAMEBUFFER;
+    glViewport(0, 0, windowW, windowH);
+    gl->base.CPortX = 0;
+    gl->base.CPortY = 0;
+    gl->base.CPortW = windowW;
+    gl->base.CPortH = windowH;
+#else
     int32_t appId = gl->base.runner->applicationSurfaceId;
     glBindFramebuffer(GL_FRAMEBUFFER, gl->surfaces[appId]);
     gl->activeSurfaceId = appId;
@@ -211,6 +222,7 @@ static void glBeginFrame(Renderer* renderer, int32_t gameW, int32_t gameH, int32
     gl->base.CPortY = 0;
     gl->base.CPortW = gameW;
     gl->base.CPortH = gameH;
+#endif
     glBindTexture(GL_TEXTURE_2D, 0);
 }
 
@@ -222,7 +234,17 @@ static void glBeginView(Renderer* renderer, MAYBE_UNUSED int32_t viewX, MAYBE_UN
     // Set viewport and scissor to the port rectangle within the FBO
     // FBO uses game resolution, port coordinates are in game space
     // OpenGL viewport Y is bottom-up, game Y is top-down
+#ifdef PLATFORM_PS3
+    if (gl->activeSurfaceId == RENDER_TARGET_HOST_FRAMEBUFFER) {
+        int32_t sx, sy, ex, ey;
+        GLCommon_computeLetterbox(gl->gameW, gl->gameH, gl->windowW, gl->windowH, &sx, &sy, &ex, &ey);
+        glApplyViewport(gl, sx, sy, ex - sx, ey - sy);
+    } else {
+        glApplyViewport(gl, portX, portY, portW, portH);
+    }
+#else
     glApplyViewport(gl, portX, portY, portW, portH);
+#endif
 
     int32_t viewCurrent = 0;
     if (renderer->runner->viewsEnabled) {
@@ -249,9 +271,15 @@ static void glBeginGUI(Renderer* renderer, int32_t guiW, int32_t guiH, int32_t p
     if (targetSurfaceId == RENDER_TARGET_HOST_FRAMEBUFFER) {
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         gl->activeSurfaceId = RENDER_TARGET_HOST_FRAMEBUFFER;
+#ifdef PLATFORM_PS3
+        int32_t sx, sy, ex, ey;
+        GLCommon_computeLetterbox(gl->gameW, gl->gameH, gl->windowW, gl->windowH, &sx, &sy, &ex, &ey);
+        glApplyViewport(gl, sx, sy, ex - sx, ey - sy);
+#else
         glViewport(0, 0, portW, portH);
         glEnable(GL_SCISSOR_TEST);
         glScissor(0, 0, portW, portH);
+#endif
     } else {
         require(targetSurfaceId >= 0 && (uint32_t) targetSurfaceId < gl->surfaceCount);
         require(gl->surfaces[targetSurfaceId] != 0);
@@ -328,7 +356,10 @@ static void glEndGUI(MAYBE_UNUSED Renderer* renderer) {
     glDisable(GL_SCISSOR_TEST);
 }
 
-static void glEndFrameInit(Renderer* renderer) {
+static void glEndFrameInit(MAYBE_UNUSED Renderer* renderer) {
+#ifdef PLATFORM_PS3
+    return;
+#else
     GLLegacyRenderer* gl = (GLLegacyRenderer*) renderer;
     if (renderer->runner->usingAppSurface && !renderer->runner->appSurfaceAutoDraw) {
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -336,9 +367,13 @@ static void glEndFrameInit(Renderer* renderer) {
     }
     int32_t appId = gl->base.runner->applicationSurfaceId;
     GLCommon_beginLetterboxBlit(gl->surfaces[appId], 0);
+#endif
 }
 
-static void glEndFrameEnd(Renderer* renderer) {
+static void glEndFrameEnd(MAYBE_UNUSED Renderer* renderer) {
+#ifdef PLATFORM_PS3
+    return;
+#else
     GLLegacyRenderer* gl = (GLLegacyRenderer*) renderer;
     if (renderer->runner->usingAppSurface && !renderer->runner->appSurfaceAutoDraw) {
         return;
@@ -346,6 +381,7 @@ static void glEndFrameEnd(Renderer* renderer) {
     int32_t appId = gl->base.runner->applicationSurfaceId;
     GLCommon_beginLetterboxBlit(gl->surfaces[appId], 0);
     GLCommon_endLetterboxBlit(gl->surfaceWidth[appId], gl->surfaceHeight[appId], gl->gameW, gl->gameH, gl->windowW, gl->windowH, 0);
+#endif
 }
 
 static void glRendererFlush(MAYBE_UNUSED Renderer* renderer) {}

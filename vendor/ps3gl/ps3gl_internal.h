@@ -160,7 +160,7 @@ struct ps3gl_framebuffer {
 	uint32_t depthSize;
 };
 
-struct ps3gl_opengl_state
+struct __attribute__((aligned(16))) ps3gl_opengl_state
 {
 	// Color
 	GLuint clear_color;

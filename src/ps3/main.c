@@ -54,11 +54,12 @@ const PadMapping PAD_MAPPINGS[] = {
     { PAD_BUTTON_OFFSET_DIGITAL1, PAD_CTRL_DOWN,     VK_DOWN },
     { PAD_BUTTON_OFFSET_DIGITAL1, PAD_CTRL_LEFT,     VK_LEFT },
     { PAD_BUTTON_OFFSET_DIGITAL1, PAD_CTRL_RIGHT,    VK_RIGHT },
-    { PAD_BUTTON_OFFSET_DIGITAL1, PAD_CTRL_START,    'C' },
+    { PAD_BUTTON_OFFSET_DIGITAL1, PAD_CTRL_START,    VK_F12 },
 #ifdef DONUT_SPIDER_DEV_BUILD
     { PAD_BUTTON_OFFSET_DIGITAL1, PAD_CTRL_SELECT,   VK_F12 },
 #endif
     { PAD_BUTTON_OFFSET_DIGITAL2, PAD_CTRL_CROSS,    'Z' },
+    { PAD_BUTTON_OFFSET_DIGITAL2, PAD_CTRL_CIRCLE,   'X' },
     { PAD_BUTTON_OFFSET_DIGITAL2, PAD_CTRL_SQUARE,   'X' },
     { PAD_BUTTON_OFFSET_DIGITAL2, PAD_CTRL_TRIANGLE, 'C' },
     { PAD_BUTTON_OFFSET_DIGITAL2, PAD_CTRL_L1,       VK_PAGEDOWN },
@@ -185,6 +186,9 @@ static void wadLoadProgress(const char* chunkName, int chunkIndex, int totalChun
 }
 
 int main(int argc, char* argv[]) {
+    extern bool gPS3GL_DebugLogEnabled;
+    gPS3GL_DebugLogEnabled = false;
+
     sysUtilRegisterCallback(SYSUTIL_EVENT_SLOT0, sys_callback, NULL);
     freq = sysGetTimebaseFrequency();
 
@@ -193,7 +197,7 @@ int main(int argc, char* argv[]) {
     // WAD fast path for repeatable RPCS3 tests.
     ps3glInit();
 #ifdef DONUT_SPIDER_DEV_BUILD
-    runSurfaceReadbackSelfTest();
+    // runSurfaceReadbackSelfTest();
 #endif
     ioPadInit(7);
     PS3Overlay_init();
@@ -202,6 +206,8 @@ int main(int argc, char* argv[]) {
     printf("%s %s executable: %s\n", DONUT_SPIDER_DISPLAY_NAME, DONUT_SPIDER_VERSION, executablePath);
     char* appDirectory = directoryOfPath(executablePath);
     PS3SessionLog_open(appDirectory);
+    extern bool gPS3SessionLog_ForceDiskFlush;
+    gPS3SessionLog_ForceDiskFlush = true;
     PS3SessionLog_event("SESSION START executable=%s", executablePath);
     char* bundledWadPath = joinPath(appDirectory, "data.win");
     char* dataWinPath = nullptr;
@@ -365,16 +371,22 @@ int main(int argc, char* argv[]) {
         glLinkProgram(gPalettedProgram);
         gPalettedUPaletteVLoc = glGetUniformLocation(gPalettedProgram, "uPaletteV");
         GLint uPaletteLoc = glGetUniformLocation(gPalettedProgram, "uPalette");
+        GLint uIndexLoc = glGetUniformLocation(gPalettedProgram, "uIndex");
         glUseProgram(gPalettedProgram);
-        glUniform1i(uPaletteLoc, 1);
+        if (uIndexLoc >= 0) glUniform1i(uIndexLoc, 0);
+        if (uPaletteLoc >= 0) glUniform1i(uPaletteLoc, 1);
         glUseProgram(0);
         printf("Paletted shader: program=%u uPaletteV=%d uPalette=%d\n", gPalettedProgram, gPalettedUPaletteVLoc, uPaletteLoc);
+        PS3SessionLog_event("Paletted shader: program=%u uPaletteV=%d uPalette=%d", gPalettedProgram, gPalettedUPaletteVLoc, uPaletteLoc);
     }
 
     // Initialize the runner
     Runner* runner = Runner_create(dataWin, vm, renderer, (FileSystem*) overlayFs, audioSystem);
-    runner->debugMode = false;
-    //runner->osType = OS_PS3;
+    runner->debugMode = true;
+    extern bool gPS3GL_DebugLogEnabled;
+    gPS3GL_DebugLogEnabled = false;
+
+    gPS3SessionLog_ForceDiskFlush = false;
 
     // Initialize the first room and fire Game Start / Room Start events
     Runner_initFirstRoom(runner);
@@ -415,8 +427,10 @@ int main(int argc, char* argv[]) {
             // So we'll check if there WAS a change before trying to process the keys, to avoid releasing the keys on every frame.
             // -ioPadGetData
             if (paddata.len > 0) {
+                uint8_t d1 = (uint8_t) paddata.button[PAD_BUTTON_OFFSET_DIGITAL1];
+                uint8_t d2 = (uint8_t) paddata.button[PAD_BUTTON_OFFSET_DIGITAL2];
                 repeat(PAD_MAPPING_COUNT, i) {
-                    uint8_t byte = (uint8_t) paddata.button[PAD_MAPPINGS[i].digital];
+                    uint8_t byte = (PAD_MAPPINGS[i].digital == PAD_BUTTON_OFFSET_DIGITAL1) ? d1 : d2;
                     uint8_t mask = PAD_MAPPINGS[i].mask;
                     int32_t gmlKey = PAD_MAPPINGS[i].gmlKey;
 
@@ -433,7 +447,7 @@ int main(int argc, char* argv[]) {
                 }
 
                 repeat(STICK_MAPPING_COUNT, i) {
-                    int axisValue = (int) paddata.button[STICK_MAPPINGS[i].axis];
+                    int axisValue = (int) (uint8_t) paddata.button[STICK_MAPPINGS[i].axis];
                     int signedDelta = STICK_MAPPINGS[i].sign * (axisValue - STICK_CENTER);
 
                     bool isPressed = signedDelta > STICK_THRESHOLD;
@@ -470,7 +484,9 @@ int main(int argc, char* argv[]) {
 #ifdef DONUT_SPIDER_DEV_BUILD
             double stepStart = PS3_GET_TIME;
 #endif
+            PS3SessionLog_event("FRAME %d STEP START", runner->frameCount);
             Runner_step(runner);
+            PS3SessionLog_event("FRAME %d STEP END", runner->frameCount);
 #ifdef DONUT_SPIDER_DEV_BUILD
             stepTime = PS3_GET_TIME - stepStart;
 #endif
@@ -504,11 +520,14 @@ int main(int argc, char* argv[]) {
 #ifdef DONUT_SPIDER_DEV_BUILD
         double drawStart = PS3_GET_TIME;
 #endif
+        PS3SessionLog_event("FRAME %d DRAW START", runner->frameCount);
+        
         Runner_drawViews(runner, gameW, gameH, debugShowCollisionMasks);
         renderer->vtable->endFrameInit(renderer);
         Runner_drawPost(runner, fbWidth, fbHeight);
         renderer->vtable->endFrameEnd(renderer);
         Runner_drawGUI(runner, fbWidth, fbHeight, gameW, gameH);
+
 #ifdef DONUT_SPIDER_DEV_BUILD
         double drawTime = PS3_GET_TIME - drawStart;
 
@@ -517,10 +536,28 @@ int main(int argc, char* argv[]) {
         PS3Overlay_drawDebugOverlay(runner, (float) (tickTime * 1000.0), (float) (stepTime * 1000.0), (float) (drawTime * 1000.0), (float) (audioTime * 1000.0), fbWidth, fbHeight);
 #endif
 
+        // Real-time FPS logger
+        static double fpsLastLogTime = 0;
+        static int fpsFrameCount = 0;
+        fpsFrameCount++;
+        double nowTime = PS3_GET_TIME;
+        if (fpsLastLogTime == 0) fpsLastLogTime = nowTime;
+        double elapsedSec = nowTime - fpsLastLogTime;
+        if (elapsedSec >= 1.0) {
+            double currentFps = (double)fpsFrameCount / elapsedSec;
+            double avgMs = (elapsedSec / (double)fpsFrameCount) * 1000.0;
+            PS3SessionLog_event("PERF STATS: FPS=%.2f (avg_frame_time=%.2f ms, total_frames=%d)", currentFps, avgMs, runner->frameCount);
+            printf("PERF STATS: FPS=%.2f (avg_frame_time=%.2f ms, total_frames=%d)\n", currentFps, avgMs, runner->frameCount);
+            fpsFrameCount = 0;
+            fpsLastLogTime = nowTime;
+        }
+
         sysUtilCheckCallback();
         // Only swap when there isn't a room change to match the original runner.
         if (runner->pendingRoom == -1) {
+            PS3SessionLog_event("FRAME %d SWAP START", runner->frameCount);
             ps3glSwapBuffers();
+            PS3SessionLog_event("FRAME %d SWAP END", runner->frameCount);
         }
         Runner_handlePendingRoomChange(runner);
 

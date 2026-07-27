@@ -248,6 +248,9 @@ void PS3Overlay_drawDebugOverlay(const Runner* runner, float tickMs, float stepM
     glPushMatrix();
     glLoadIdentity();
 
+    glUseProgram(0);
+    glActiveTexture(GL_TEXTURE0);
+    glEnable(GL_TEXTURE_2D);
     // Update the view port to fill the entire screen instead of using letterboxing.
     glViewport(0, 0, fbWidth, fbHeight);
 

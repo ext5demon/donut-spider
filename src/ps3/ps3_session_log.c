@@ -10,6 +10,7 @@
 #define SESSION_LOG_PATH_MAX 1024
 
 static FILE* sessionFile = NULL;
+bool gPS3SessionLog_ForceDiskFlush = false;
 static char sessionPath[SESSION_LOG_PATH_MAX] = {0};
 static time_t sessionStartedAt = 0;
 
@@ -70,7 +71,8 @@ bool PS3SessionLog_open(const char* appDirectory) {
     fprintf(sessionFile, "Donut Spider %s (%s)\n", DONUT_SPIDER_VERSION, DONUT_SPIDER_DISPLAY_NAME);
     fprintf(sessionFile, "Status: Pre-alpha\n");
     fprintf(sessionFile, "Log path: %s\n", sessionPath);
-    fflush(sessionFile);
+    fclose(sessionFile);
+    sessionFile = fopen(sessionPath, "a");
     printf("Session log: %s\n", sessionPath);
     return true;
 }
@@ -84,6 +86,16 @@ void PS3SessionLog_event(const char* format, ...) {
     va_end(args);
     fputc('\n', sessionFile);
     fflush(sessionFile);
+    if (gPS3SessionLog_ForceDiskFlush) {
+        PS3SessionLog_flushToDisk();
+    }
+}
+
+void PS3SessionLog_flushToDisk(void) {
+    if (sessionFile) {
+        fclose(sessionFile);
+        sessionFile = fopen(sessionPath, "a");
+    }
 }
 
 void PS3SessionLog_heartbeat(const char* roomName, int32_t roomIndex, int32_t frame,
@@ -93,6 +105,7 @@ void PS3SessionLog_heartbeat(const char* roomName, int32_t roomIndex, int32_t fr
         "HEARTBEAT room=%s room_index=%d frame=%d instances=%d structs=%d heap=%u texture_ram=%u surface_ram=%u",
         roomName != NULL ? roomName : "?", roomIndex, frame, instances, structs,
         (unsigned)heapBytes, (unsigned)textureBytes, (unsigned)surfaceBytes);
+    PS3SessionLog_flushToDisk();
 }
 
 void PS3SessionLog_close(const char* reason) {

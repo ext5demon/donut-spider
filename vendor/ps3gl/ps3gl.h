@@ -9,6 +9,8 @@ extern "C"
 #endif
 
 void ps3glInit(void);
+void glTexCoord2f(GLfloat s, GLfloat t);
+void glTexCoord4f(GLfloat s, GLfloat t, GLfloat r, GLfloat q);
 void ps3glSwapBuffers(void);
 
 #define PS3GL_SHADER_BINARY_VPO         0x1ED01

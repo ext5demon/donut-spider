@@ -12,6 +12,10 @@
 #include "image_decoder.h"
 #endif
 
+#ifdef PLATFORM_PS3
+extern void PS3SessionLog_event(const char* format, ...);
+#endif
+
 typedef struct {
     uint32_t offset;
     uint32_t size;
@@ -278,7 +282,10 @@ int32_t VideoPlayer_draw(VideoPlayer* player, Runner* runner, int32_t* outSurfac
         FileSystem* fs = runner->fileSystem;
         if (!fs->vtable->binarySeek(fs, player->fileHandle, (int32_t) entry.offset)
             || !readExact(fs, player->fileHandle, player->compressedFrame, (int32_t) entry.size)) {
-            fprintf(stderr, "Video: failed to read frame %u\n", frameIndex);
+    #ifdef PLATFORM_PS3
+        PS3SessionLog_event("[ :( ] Video: failed to read frame %u", frameIndex);
+#endif
+        fprintf(stderr, "Video: failed to read frame %u\n", frameIndex);
             return -1;
         }
 
@@ -286,10 +293,18 @@ int32_t VideoPlayer_draw(VideoPlayer* player, Runner* runner, int32_t* outSurfac
         int decodedHeight = 0;
         uint8_t* rgba = ImageDecoder_decodeToRgba(player->compressedFrame, entry.size, false, &decodedWidth, &decodedHeight);
         if (rgba == nullptr || decodedWidth != (int) player->width || decodedHeight != (int) player->height) {
-            fprintf(stderr, "Video: failed to decode frame %u\n", frameIndex);
+    #ifdef PLATFORM_PS3
+        PS3SessionLog_event("[ :( ] Video: failed to decode frame %u", frameIndex);
+#endif
+        fprintf(stderr, "Video: failed to decode frame %u\n", frameIndex);
             free(rgba);
             return -1;
         }
+
+    #ifdef PLATFORM_PS3
+    PS3SessionLog_event("[OK] Video: frame %u decoded successfully (%dx%d, %u bytes)", frameIndex, decodedWidth, decodedHeight, entry.size);
+#endif
+    fprintf(stderr, "Video: frame %u decoded successfully (%dx%d, %u bytes)\n", frameIndex, decodedWidth, decodedHeight, entry.size);
 
         Renderer* renderer = runner->renderer;
         if (renderer->vtable->surfaceUpdatePixels == nullptr) {
@@ -299,14 +314,27 @@ int32_t VideoPlayer_draw(VideoPlayer* player, Runner* runner, int32_t* outSurfac
         }
         if (player->surfaceId < 0) {
             player->surfaceId = renderer->vtable->createSurface(renderer, (int32_t) player->width, (int32_t) player->height);
+            fprintf(stderr, "Video: created surface %d\n", player->surfaceId);
         }
+        
+#ifdef PLATFORM_PS3
+        PS3SessionLog_event("[OK] Video: pushing frame %u to surface %d...", frameIndex, player->surfaceId);
+#endif
+        fprintf(stderr, "Video: pushing frame %u to surface %d...\n", frameIndex, player->surfaceId);
         bool uploaded = player->surfaceId >= 0
             && renderer->vtable->surfaceUpdatePixels(renderer, player->surfaceId, rgba, (int32_t) player->width, (int32_t) player->height);
         free(rgba);
         if (!uploaded) {
+#ifdef PLATFORM_PS3
+            PS3SessionLog_event("[ :( ] Video: failed to upload frame %u", frameIndex);
+#endif
             fprintf(stderr, "Video: failed to upload frame %u\n", frameIndex);
             return -1;
         }
+#ifdef PLATFORM_PS3
+        PS3SessionLog_event("[OK] Video: frame %u pushed successfully", frameIndex);
+#endif
+        fprintf(stderr, "Video: frame %u pushed successfully\n", frameIndex);
         player->decodedFrame = (int32_t) frameIndex;
     }
 

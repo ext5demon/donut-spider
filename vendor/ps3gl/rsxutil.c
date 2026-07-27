@@ -23,6 +23,15 @@
 
 #include "rsxutil.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+extern void PS3SessionLog_event(const char* format, ...);
+extern void PS3SessionLog_flushToDisk(void);
+#ifdef __cplusplus
+}
+#endif
+
 #define GCM_LABEL_INDEX		255
 
 videoOutResolution res;
@@ -101,13 +110,22 @@ void setRenderTarget(u32 index)
 	sf.x				= 0;
 	sf.y				= 0;
 
+	PS3SessionLog_event("RSX DIAG: setRenderTarget. fb=%d, color_offs=%08X, depth_offs=%08X, color_pitch=%d, depth_pitch=%d", index, sf.colorOffset[0], sf.depthOffset, sf.colorPitch[0], sf.depthPitch);
 	rsxSetSurface(context,&sf);
 }
 
 void waitflip()
 {
-	while(gcmGetFlipStatus()!=0)
+	u32 timeout = 0;
+	while(gcmGetFlipStatus()!=0) {
 		usleep(200);
+		timeout++;
+		if (timeout > 15000) { // 3 seconds
+			PS3SessionLog_event("RSX_PANIC: waitflip timeout! GPU never executed the flip. RSX likely crashed!");
+			PS3SessionLog_flushToDisk();
+			exit(1);
+		}
+	}
 	gcmResetFlipStatus();
 }
 
@@ -115,15 +133,30 @@ void waitflip()
 // Thanks to kd-11 for telling me how to fix the issue!
 static void resetCommandBuffer()
 {
+	PS3SessionLog_event("RSX DIAG: resetCommandBuffer start");
 	rsxFinish(context, 1);
 	u32 startoffs;
 	rsxAddressToOffset(initialCommandBuffer, &startoffs);
 	rsxSetJumpCommand(context, startoffs);
-
+	
 	gcmControlRegister volatile *ctrl = gcmGetControlRegister();
 	ctrl->put = startoffs;
-	while (ctrl->get != startoffs) usleep(30);
 	
+	PS3SessionLog_event("RSX DIAG: Waiting for get == %08X, current get is %08X, current put is %08X", startoffs, ctrl->get, ctrl->put);
+	
+	u32 timeout = 0;
+	while (ctrl->get != startoffs) {
+		usleep(30);
+		timeout++;
+		if (timeout > 100000) { // 3 seconds
+			PS3SessionLog_event("RSX_PANIC: command buffer get wait timeout! get: %08X, put: %08X", ctrl->get, ctrl->put);
+			PS3SessionLog_flushToDisk();
+			exit(1);
+		}
+	}
+	PS3SessionLog_event("RSX DIAG: resetCommandBuffer finished waiting. get is %08X", ctrl->get);
+	
+	// Now safe to reset the CPU pointers
 	context->current = initialCommandBuffer;
 	context->begin   = initialCommandBuffer;
 	context->end     = context->begin + commandBufferSize;
@@ -134,7 +167,7 @@ void init_screen(void *host_addr,u32 size)
 	rsxInit(&context,CB_SIZE,size,host_addr);
 
 	initialCommandBuffer = context->current;
-	commandBufferSize = size;
+	commandBufferSize = CB_SIZE;
 	videoOutState state;
 	videoOutGetState(0,0,&state);
 
@@ -174,6 +207,7 @@ void init_screen(void *host_addr,u32 size)
 
 void flip()
 {
+	PS3SessionLog_event("RSX DIAG: flip() start. ctx->current alignment: %d", ((uintptr_t)context->current) % 4);
 	rsxFinish(context, 0);
 	if(!first_fb) waitflip();
 	else gcmResetFlipStatus();
@@ -184,8 +218,11 @@ void flip()
 	gcmSetWaitFlip(context);
 
 	curr_fb ^= 1;
-	resetCommandBuffer();
+	if ((uintptr_t)context->current + 512 * 1024 >= (uintptr_t)context->end) {
+		resetCommandBuffer();
+	}
 	setRenderTarget(curr_fb);
 
 	first_fb = 0;
+	PS3SessionLog_event("RSX DIAG: flip() end.");
 }

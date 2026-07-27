@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "ps3_session_log.h"
 
 // We stream the texture pages on demand from the file instead of loading everything in RAM.
 
@@ -58,6 +59,8 @@ bool PS3Textures_init(const char* texturesBinPath) {
     gClutCount = readU16BE(headerBuf + 1);
     gPageCount = readU16BE(headerBuf + 3);
     gTpagCount = readU16BE(headerBuf + 5);
+
+    PS3SessionLog_event("PS3Textures_init: gTpagCount=%u gClutCount=%u", gTpagCount, gClutCount);
 
     // --- CLUT atlas: read into a temp buffer, upload to GPU, free ---
     size_t clutBytes = (size_t) gClutCount * 256 * 4;
@@ -158,18 +161,23 @@ bool PS3Textures_loadPage(uint32_t pageId, int* outW, int* outH, uint8_t** outPi
     const PageInfo* h = &gPageInfo[pageId];
     if (h->width == 0 || h->height == 0 || h->pixelDataSize == 0) return false;
 
+    PS3SessionLog_event("[OK] Reading page %u from file (offset %ld, %u bytes)", pageId, gPixelBlockBase + (long) h->pixelOffset, h->pixelDataSize);
+
     uint8_t* buf = (uint8_t*) malloc(h->pixelDataSize);
     if (buf == NULL) {
         fprintf(stderr, "PS3Textures: malloc(%u) for page %u failed\n", h->pixelDataSize, pageId);
+        PS3SessionLog_event("[ :( ] malloc failed for page %u", pageId);
         return false;
     }
 
     if (fseek(gFp, gPixelBlockBase + (long) h->pixelOffset, SEEK_SET) != 0) {
         free(buf);
+        PS3SessionLog_event("[ :( ] fseek failed for page %u", pageId);
         return false;
     }
     if (fread(buf, 1, h->pixelDataSize, gFp) != h->pixelDataSize) {
         free(buf);
+        PS3SessionLog_event("[ :( ] fread failed for page %u", pageId);
         return false;
     }
 

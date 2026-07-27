@@ -1,138 +1,108 @@
-# Donut Spider
+# Spider Donut Alpha 1 (A1)
 
 ![Donut Spider logo](assets/donut-spider-logo.png)
 
-**PA_002 — Pre-alpha**
+**Spider Donut Alpha 1 (A1)**
 
-Donut Spider is an experimental GameMaker bytecode runner with a PlayStation 3 backend. The current PS3 build focuses on WAD 17 games and keeping memory use inside the console's limits.
+Spider Donut (formerly Donut Spider) is an experimental GameMaker bytecode runner with a native PlayStation 3 (libgcm / RSX) backend. This release focuses on WAD 17 games (such as Deltarune Chapter 1 & 2) and optimizing performance and memory usage for the PS3 console architecture.
 
-This is test software. It is playable in places, but it is not accurate or stable enough to call finished. Back up your saves.
+This is alpha software. It is playable across major game rooms, but it is still under active development. Always back up your save files.
 
-## Before you install it
+## Before You Install
 
-The repository and release package do not include games, WADs, saves, music, video, or extracted commercial assets. You need to supply files from your own copy of a game.
+The repository and release packages do not include game assets, WADs, saves, audio, or video files. You must supply your own `data.win` and texture assets from your legally owned copy of the game.
 
-A PS3 game bundle currently looks like this:
+A PS3 game directory bundle should be structured as follows:
 
 ```text
 my-game/
   data.win
   TEXTURES.BIN
   mus/
-  ...other audio and video files used by the game...
+  ...other game assets...
 ```
 
-`TEXTURES.BIN` is the PS3 texture-streaming bundle. Keep it beside `data.win`; lowercase `textures.bin` is also accepted. Donut Spider will refuse to open a WAD when the texture bundle is missing.
+`TEXTURES.BIN` is the PS3 texture streaming bundle. Keep it in the same directory as `data.win` (lowercase `textures.bin` is also supported).
 
-Donut Spider is unofficial and is not affiliated with Toby Fox, 8-4, GameMaker, or YoYo Games.
+Spider Donut is an independent open-source project and is not affiliated with Toby Fox, 8-4, GameMaker, or YoYo Games.
 
-## Installing PA_002 on PS3
+## Installation
 
-1. Download `Donut-Spider-PA_002.pkg` from the GitHub release.
-2. Install it through Package Manager on a CFW or HEN-enabled PS3.
-3. Copy your private game bundle to the internal drive or a USB device.
-4. Launch **Donut Spider**.
-5. Use **SELECT WAD** to browse to the `.win` file and press Cross.
+1. Download `spider-donut-A1.pkg` from the release repository.
+2. Install the PKG on a HEN or CFW-enabled PlayStation 3 system using Package Manager.
+3. Copy your game bundle to the PS3 internal storage (`/dev_hdd0/`) or an external USB drive.
+4. Launch **Spider Donut Alpha 1** from the XMB.
+5. Use the built-in WAD picker to navigate to your `data.win` file and press **Cross** to boot.
 
-The public package installs as title ID `DONS00001`. The separate developer package uses `DONSD0001`, so both builds can be installed at once.
+Log files are stored in `USRDIR/logs/` on the PS3 hard drive. Logs record runtime statistics, frame rates, room transitions, and diagnostic heartbeats.
 
-Every launch creates a persistent session log in the app's `USRDIR/logs/` directory on the PS3 HDD. Logs record the selected WAD, detected game and WAD versions, room transitions, ten-second runtime/memory heartbeats, fatal load errors, and the session exit reason. Each entry is flushed immediately, so the log remains useful when a game or emulator crashes before a clean shutdown.
+## Controls
 
-### WAD picker controls
+### WAD Picker Controls
 
-- D-pad: move
-- Cross: open directory or select WAD
-- Circle: go back
-- Square: refresh storage
+| Button | Action |
+|---|---|
+| D-Pad Up / Down | Navigate entries |
+| Cross | Select WAD or open directory |
+| Circle | Go to parent directory |
+| Square | Refresh storage list |
 
-### In-game controls
+### In-Game Controls
 
-- D-pad or left stick: movement
-- Cross: Z / confirm
-- Square: X / cancel
-- Triangle or Start: C / menu
-- L1 and R1: Page Down and Page Up
-- L2: F10
+| PS3 Button | Game Input / Mapping |
+|---|---|
+| D-Pad / Left Analog | Movement |
+| Cross (`X`) | Confirm / Interact (`Z`) |
+| Circle (`O`) / Square (`[]`) | Cancel / Run / Back (`X`) |
+| Triangle (`/\`) | Menu (`C`) |
+| Start / Options | Toggle Developer Overlay |
+| L1 / R1 | Page Down / Page Up |
+| L2 | F10 |
 
-## Known PA_002 problems
+## Known Bugs & Limitations in Alpha 1
 
-- PS3 surface captures can lose their alpha channel. The Chapter 4 prophecy sequence is visibly broken and some captured sprites have black rectangles.
-- Heavy battles and effects can dip below their intended frame rate.
-- WAD 17 support does not mean every game or every room is supported. Missing GML functions, shaders, codecs, and platform behavior can still stop a run.
-- Hardware testing is ongoing. We recently fixed RSX 64-byte pitch alignment crashes on bare metal, but there may still be other instability issues.
+- **Surface Capture Alpha Channels:** Framebuffer surface readbacks used in specific cutscene prophecy effects may drop alpha channels, rendering behind dark rectangles.
+- **Dynamic Asset Stalls:** Uncached texture assets or large room transitions can cause temporary frame drops during loading.
+- **Coverage:** Some specialized GML built-in functions or uncommon audio codecs may produce fallback behavior.
+- **Hardware Testing:** Testing is ongoing on native PS3 hardware and RPCS3 emulator.
 
-Please include the version, game version, room name, and the last visible action when reporting a bug.
+## Building from Source
 
-## Building the PS3 version
+### Prerequisites
 
-You need:
-
-- a working [PSL1GHT/ps3dev](https://github.com/ps3dev/PSL1GHT) toolchain
-- PSL1GHT's PPU SDL2 portlib
+- A working [PSL1GHT/ps3dev](https://github.com/ps3dev/PSL1GHT) toolchain
+- PPU SDL2 portlib
 - CMake 3.21 or newer
-- Python 3 (used to scrub local build paths from the ELF)
-- Unix Makefiles or another CMake generator supported by your toolchain
-- PowerShell for the packaging script
+- Make or Ninja build tools
 
-Set `PS3DEV` and `PSL1GHT` to the toolchain root. From the repository root, configure the public build:
+### Build Instructions
 
-```powershell
-$env:PS3DEV = 'C:\ps3dev'
-$env:PSL1GHT = $env:PS3DEV
+Set your `PS3DEV` and `PSL1GHT` environment variables to your local toolchain path, then run:
 
-cmake -S . -B build-ps3-public -G 'Unix Makefiles' `
-  -DPLATFORM=ps3 `
-  -DCMAKE_BUILD_TYPE=Release `
-  -DCMAKE_PREFIX_PATH="$env:PS3DEV\portlibs\ppu" `
-  -DENABLE_WAD14=OFF `
-  -DENABLE_WAD16=OFF `
-  -DENABLE_WAD17=ON `
-  -DDONUT_SPIDER_VERSION=PA_002 `
-  -DDONUT_SPIDER_DEV_BUILD=OFF `
-  -DDONUT_SPIDER_DEV_PRELOAD_WAD=OFF
+```bash
+export PS3DEV=/path/to/ps3dev
+export PSL1GHT=$PS3DEV
 
-cmake --build build-ps3-public --parallel
-pwsh tools/build-ps3-package.ps1 -Variant Public -BuildDirectory build-ps3-public
+cmake -S . -B build-ps3-release \
+  -DCMAKE_TOOLCHAIN_FILE=cmake/ppu.cmake \
+  -DPLATFORM=ps3 \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DDONUT_SPIDER_VERSION=A1 \
+  -DDONUT_SPIDER_DEV_BUILD=ON
+
+cmake --build build-ps3-release --parallel
 ```
 
-The package and SHA-256 checksum are written to `dist/`.
+To create the final PKG installer:
 
-For the diagnostic build, change `DONUT_SPIDER_DEV_BUILD` to `ON`, use a separate build directory, then package it with `-Variant Dev`:
-
-```powershell
-cmake -S . -B build-ps3-dev-release -G 'Unix Makefiles' `
-  -DPLATFORM=ps3 `
-  -DCMAKE_BUILD_TYPE=Release `
-  -DCMAKE_PREFIX_PATH="$env:PS3DEV\portlibs\ppu" `
-  -DENABLE_WAD14=OFF `
-  -DENABLE_WAD16=OFF `
-  -DENABLE_WAD17=ON `
-  -DDONUT_SPIDER_VERSION=PA_002 `
-  -DDONUT_SPIDER_DEV_BUILD=ON `
-  -DDONUT_SPIDER_DEV_PRELOAD_WAD=OFF
-
-cmake --build build-ps3-dev-release --parallel
-pwsh tools/build-ps3-package.ps1 -Variant Dev -BuildDirectory build-ps3-dev-release
+```bash
+./build.sh
 ```
 
-The developer build starts with its diagnostics visible. Select toggles the overlay while a game is running. `DONUT_SPIDER_DEV_PRELOAD_WAD` exists for private repeatable testing only; do not enable it for public packages.
+The resulting package `spider-donut-A1.pkg` will be generated in the `dist/` directory.
 
-## Desktop development build
+## Project History & License
 
-Desktop builds are useful for checking parser and VM changes before waiting on the PS3 linker. Choose an installed backend and configure it normally. For example, with SDL2:
+Spider Donut is derived from [Butterscotch4PS3](https://github.com/WinG4merBR/Butterscotch4PS3) and [Butterscotch](https://github.com/ButterscotchRunner/Butterscotch).
 
-```powershell
-cmake -S . -B build-windows-debug `
-  -DPLATFORM=desktop `
-  -DDESKTOP_BACKEND=sdl2 `
-  -DCMAKE_BUILD_TYPE=Debug `
-  -DENABLE_WAD17=ON
-
-cmake --build build-windows-debug --parallel
-```
-
-## Project history and license
-
-Donut Spider is derived from [Butterscotch4PS3](https://github.com/WinG4merBR/Butterscotch4PS3) and [Butterscotch](https://github.com/ButterscotchRunner/Butterscotch). Their work made this port possible.
-
-Source code is available under the [Mozilla Public License 2.0](LICENSE). The logo in this repository is the project's supplied artwork; it is not extracted from a game.
+Source code is released under the [Mozilla Public License 2.0](LICENSE).

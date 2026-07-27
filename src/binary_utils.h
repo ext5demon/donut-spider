@@ -60,6 +60,33 @@ static inline uint64_t BinaryUtils_bswap64(uint64_t value) {
 }
 #endif
 
+#if defined(__ALTIVEC__)
+#include <altivec.h>
+#endif
+
+static inline void BinaryUtils_bswap32_SIMD(uint32_t* data, size_t count) {
+#if defined(__ALTIVEC__)
+    vector unsigned char perm = { 
+        3, 2, 1, 0, 
+        7, 6, 5, 4, 
+        11, 10, 9, 8, 
+        15, 14, 13, 12 
+    };
+    size_t vec_count = count / 4;
+    vector unsigned char* v_data = (vector unsigned char*)data;
+    for (size_t i = 0; i < vec_count; i++) {
+        v_data[i] = vec_perm(v_data[i], v_data[i], perm);
+    }
+    for (size_t i = vec_count * 4; i < count; i++) {
+        data[i] = BinaryUtils_bswap32(data[i]);
+    }
+#else
+    for (size_t i = 0; i < count; i++) {
+        data[i] = BinaryUtils_bswap32(data[i]);
+    }
+#endif
+}
+
 static inline uint16_t BinaryUtils_toLittle16(uint16_t value) {
 #if defined(IS_BIG_ENDIAN)
     return BinaryUtils_bswap16(value);

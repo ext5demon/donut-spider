@@ -30,12 +30,12 @@ endif()
 # Build metadata
 set(SPIDER_DONUT_COMMIT_HASH "unknown" CACHE STRING "Git commit hash")
 set(SPIDER_DONUT_COMMIT_DATE "unknown" CACHE STRING "Git commit date")
-set(DONUT_SPIDER_VERSION "PA_001" CACHE STRING "Donut Spider release version")
-option(DONUT_SPIDER_DEV_BUILD "Enable the on-screen PS3 diagnostics and development probes" OFF)
+set(DONUT_SPIDER_VERSION "A1" CACHE STRING "Donut Spider release version" FORCE)
+option(DONUT_SPIDER_DEV_BUILD "Enable the on-screen PS3 diagnostics and development probes" ON)
 if(DONUT_SPIDER_DEV_BUILD)
-    set(DONUT_SPIDER_DISPLAY_NAME "donut spider-dev")
+    set(DONUT_SPIDER_DISPLAY_NAME "Spider Donut Alpha 1")
 else()
-    set(DONUT_SPIDER_DISPLAY_NAME "Donut Spider")
+    set(DONUT_SPIDER_DISPLAY_NAME "Spider Donut Alpha 1")
 endif()
 add_compile_definitions(
     SPIDER_DONUT_COMMIT_HASH="${SPIDER_DONUT_COMMIT_HASH}"

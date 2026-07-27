@@ -806,6 +806,9 @@ static void glEndGUI(Renderer* renderer) {
 }
 
 static void glEndFrameInit(Renderer* renderer) {
+#ifdef PLATFORM_PS3
+    return;
+#else
     GLRenderer* gl = (GLRenderer*) renderer;
     if (hasVAO()) glBindVertexArray(0);
 
@@ -813,9 +816,13 @@ static void glEndFrameInit(Renderer* renderer) {
         glBindFramebuffer(GL_FRAMEBUFFER, gl->hostFramebuffer);
         return;
     }
+#endif
 }
 
 static void glEndFrameEnd(Renderer* renderer) {
+#ifdef PLATFORM_PS3
+    return;
+#else
     GLRenderer* gl = (GLRenderer*) renderer;
 
     if (renderer->runner->usingAppSurface && !renderer->runner->appSurfaceAutoDraw) {
@@ -850,6 +857,7 @@ static void glEndFrameEnd(Renderer* renderer) {
         glEnable(GL_BLEND);
         if (scissorWasEnabled) glEnable(GL_SCISSOR_TEST);
     }
+#endif
 }
 
 static void glRendererFlush(Renderer* renderer) {

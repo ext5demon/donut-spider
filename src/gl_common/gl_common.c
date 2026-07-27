@@ -84,7 +84,7 @@ void GLCommon_surfaceBlit(GLuint* surfaces, int32_t* surfaceWidth, int32_t* surf
     if (!resolveSurfaceFBO(surfaces, surfaceWidth, surfaceHeight, count, dstId, &dstFbo, &dstFboW, &dstFboH))
         return;
 
-    int originalFramebufferBinding;
+    int originalFramebufferBinding = 0;
 
     // Yes, in OpenGL you need to use _BINDING to query things
     glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &originalFramebufferBinding);
