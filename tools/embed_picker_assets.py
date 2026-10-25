@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Embed public picker assets in the runner header. Requires Pillow."""
+"""Embed the checked-in dev7.1 picker assets in the runner header. Requires Pillow."""
 from pathlib import Path
 import json,wave,struct
 from PIL import Image

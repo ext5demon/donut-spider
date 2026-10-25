@@ -32,10 +32,12 @@ beta software, and slowdowns or unsupported effects can still occur.
 - Your own legally obtained PC game files for each chapter you want to play.
 - A PS3 `TEXTURES.BIN` generated from **that exact chapter's `data.win`**.
 
-No DELTARUNE WADs, chapter textures, music, videos or saves are included in the
-release. The launcher uses original icons/synthesized cues and an openly licensed
-font, with an animated entrance and launch transition. Spider Donut is independent
-of Toby Fox, 8-4, GameMaker and YoYo Games.
+No DELTARUNE WADs, chapter texture bundles, gameplay music, videos or saves are
+included in the release. The launcher restores the dev7.1 menu font, chapter
+icons, SOUL cursor and menu sounds, with the same entrance and launch animations.
+These DELTARUNE menu assets belong to their original creators; see the
+[menu asset notice](assets/picker/NOTICE.txt). Spider Donut is independent of
+Toby Fox, 8-4, GameMaker and YoYo Games.
 
 ## Install and play
 
@@ -48,7 +50,7 @@ of Toby Fox, 8-4, GameMaker and YoYo Games.
 
 Keep your existing chapter folders and saves when upgrading a dev6/dev7 build;
 install over the app rather than deleting it. The app uses title ID **DONSD0001**
-and PS3 installer revision **00.12**, independently of the public version `v0.1`.
+and PS3 installer revision **00.13**, independently of the public version `v0.1`.
 
 ## Build TEXTURES.BIN
 
@@ -170,13 +172,12 @@ bash build.sh
 ```
 
 The script builds and finalizes `dist/spider-donut-v0.1.pkg` and a SHA-256 checksum.
-Set `JOBS`, `BUILD_DIR` or `OUTPUT_DIR` to override the defaults. Generated public
-menu assets are checked in; ordinary builds need no game copy, font download or
-image-generation step. To regenerate menu assets:
+Set `JOBS`, `BUILD_DIR` or `OUTPUT_DIR` to override the defaults. The dev7.1 menu
+assets and embedded header are checked in; ordinary builds need no game copy,
+font download or image-generation step. To rebuild the header from those assets:
 
 ```bash
 python3 -m pip install Pillow
-python3 tools/generate_picker_assets.py
 python3 tools/embed_picker_assets.py
 ```
 
@@ -189,7 +190,7 @@ PS3 draw-state submission at 480p, 720p and 1080p, without commercial-game downl
 Spider Donut (formerly Donut Spider) is derived from
 [Butterscotch4PS3](https://github.com/WinG4merBR/Butterscotch4PS3) and
 [Butterscotch](https://github.com/ButterscotchRunner/Butterscotch).
-Runner source is under [MPL-2.0](LICENSE). The menu font is under the
-[SIL Open Font License](assets/picker/OFL-JetBrains-Mono.txt); see the
-[menu asset notice](assets/picker/NOTICE.txt). Third-party libraries retain their
-own notices. DELTARUNE and its assets belong to their respective creators.
+Runner source is under [MPL-2.0](LICENSE). DELTARUNE menu artwork, fonts and sounds
+are excluded from that license; see the [menu asset notice](assets/picker/NOTICE.txt).
+Third-party libraries retain their own notices. DELTARUNE and its assets belong
+to their respective creators.
