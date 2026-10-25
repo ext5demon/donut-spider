@@ -95,6 +95,25 @@ the PC installation alongside the chapter folders, as shown below.
 - Do not use the PS2 atlas/ISO conversion workflow for PS3.
 - If you already have working matching PS3 bundles from dev7.2, reuse them.
 
+### Prepare cutscene videos
+
+Chapters that play external MP4 videos also need BSV video and Ogg audio files.
+The PS3 runner opens `<original-video-filename>.bsv` and its matching `.bsv.ogg`
+audio track. Copying an original MP4 alone does not prepare it for this player.
+
+With Python 3 and FFmpeg (including `ffprobe`) installed, run the source converter
+for each chapter video. For Chapter 3's English and Japanese Tenna introductions:
+
+```bash
+python3 tools/transcode_video.py "/path/to/DELTARUNE/chapter3_windows/vid/tennaIntroF1_compressed_28.mp4"
+python3 tools/transcode_video.py "/path/to/DELTARUNE/chapter3_windows/vid/tennaIntroJPf1_compressed_28.mp4"
+```
+
+Each command writes `.mp4.bsv` and `.mp4.bsv.ogg` files beside the source MP4.
+Copy both into the PS3 chapter's `vid/` folder with the full filenames intact.
+Generate these from the same game version as your chapter files. A log containing
+`Video: streamed sidecar not found` means the required converted video is missing.
+
 ### USB / internal-storage layout
 
 Example USB root after copying your own files:

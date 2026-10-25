@@ -12,11 +12,14 @@ bash tools/test-host.sh
 BUILD_DIR=build-sanitize SANITIZE=ON bash tools/test-host.sh
 ```
 
-There are 26 CTest tests, covering controller handoff/reconnection and stick
+There are 27 CTest tests, covering controller handoff/reconnection and stick
 thresholds, cropped pixel transfers, bounded DMA command submission, surfaces
 and lifetime reuse, chapter scanning, picker animation/input/draw state, texture
 bundle validation with synthetic fixtures, audio streaming/pitch/start-stop
-tails, GML VM behavior, garbage collection and vertex buffers.
+tails, GML VM behavior, garbage collection and vertex buffers. The motion-grid
+test checks that generated routes replace closed/curved paths and stop at the
+requested destination, including the relative companion routes used at the
+Chapter 3 desert tutorial pit.
 
 The real picker is exercised through production PS3GL with a host RSX recorder
 at 480p, 720p and 1080p. Native OpenGL checks cover visible atlas pixels, cursor,

@@ -15364,6 +15364,10 @@ static RValue builtin_mp_grid_path(VMContext* ctx, RValue* args, int32_t argCoun
     free(pPath->points);
     pPath->points = nullptr;
     pPath->pointCount = 0;
+    // A generated route ends at its goal, even when the destination path was
+    // created closed (path_add's default) or previously contained a curve.
+    pPath->isClosed = false;
+    pPath->isSmooth = false;
 
     // When start cell == goal cell, chain has 1 node but the native runner and GameMaker-HTML5 still emit a 2-point path (start coord + goal coord).
     // Without this, the path length is 0, adaptPath early-returns before advancing pathPosition past 1.0, and the OTHER_END_OF_PATH event never fires.

@@ -104,6 +104,8 @@ compat/config.mk
 /tmp/
 /.codex/
 textures.bin
+*.bsv
+*.bsv.ogg
 game.win
 game.unx
 *.pkg.sha256
