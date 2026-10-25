@@ -34,6 +34,24 @@ int main(void) {
     assert(first>=SOUND_INSTANCE_ID_BASE && second!=first && reads==1);
     SoundInstance* held=findInstanceById(ma,second);ALSoundBuffer* shared=held->cachedBuffer;
     assert(shared && shared->users==2 && shared->buffer==findInstanceById(ma,first)->alBuffer);
+    v->setSoundGain(audio,first,.25f,0);
+    v->setSoundGain(audio,0,.8f,0);
+    v->setGroupGain(audio,0,.5f,0);
+    float applied=0;alGetSourcef(held->alSource,AL_GAIN,&applied);assert(fabsf(applied-.4f)<.0001f);
+    alGetSourcef(findInstanceById(ma,first)->alSource,AL_GAIN,&applied);assert(fabsf(applied-.1f)<.0001f);
+    assert(fabsf(v->getSoundGain(audio,first)-.25f)<.0001f && fabsf(v->getSoundGain(audio,0)-.8f)<.0001f);
+    v->pauseSound(audio,second);assert(v->isPlaying(audio,second)&&v->isPaused(audio,second)&&v->isPaused(audio,0));
+    v->resumeSound(audio,second);assert(!v->isPaused(audio,second)&&!v->isPaused(audio,-1));
+    v->setSoundGain(audio,0,.5f,0);v->setGroupGain(audio,0,1,0);
+    int emitter=v->createEmitter(audio);assert(emitter>=0&&v->emitterExists(audio,emitter));
+    v->setEmitterGain(audio,emitter,.5f,0);
+    int crowd=v->playSoundOn(audio,emitter,0,true,1);assert(crowd>=SOUND_INSTANCE_ID_BASE);
+    v->setSoundGain(audio,crowd,.5f,0);
+    alGetSourcef(findInstanceById(ma,crowd)->alSource,AL_GAIN,&applied);assert(fabsf(applied-.125f)<.0001f);
+    v->setEmitterGain(audio,emitter,.25f,0);
+    alGetSourcef(findInstanceById(ma,crowd)->alSource,AL_GAIN,&applied);assert(fabsf(applied-.0625f)<.0001f);
+    v->freeEmitter(audio,emitter);assert(!v->emitterExists(audio,emitter)&&!v->isPlaying(audio,crowd));
+    assert(v->playSoundOn(audio,emitter,0,true,1)==-1);
     assert(fabsf(v->getSoundLength(audio,0)-(float)pcmBytes/176400)<0.001f && reads==1);
     v->stopSound(audio,first);assert(shared->users==1 && v->isPlaying(audio,second));
     // Stress eviction with a live reference: never evict a buffer still playing.

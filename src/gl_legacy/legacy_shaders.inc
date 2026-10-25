@@ -8,6 +8,9 @@ static int legacyShaderKind(GLLegacyRenderer* gl,int32_t index) {
     if(!strcmp(shader->name,"shd_pal_swapper"))return 1;
     if(!strcmp(shader->name,"shd_hue"))return 2;
     if(!strcmp(shader->name,"shd_grayscale"))return 3;
+    if(!strcmp(shader->name,"shd_luminosity_to_transparency"))return 4;
+    if(!strcmp(shader->name,"shd_grayscalesand")||!strcmp(shader->name,"shd_grayscalesand_tolerance"))return 5;
+    if(!strcmp(shader->name,"shd_tone"))return 6;
     return 0;
 }
 
@@ -54,9 +57,11 @@ static void glGpuResetShader(Renderer* renderer) {
 }
 static int32_t glShaderGetUniform(Renderer* renderer,int32_t index,char* name) {
     if(!name||!glShaderIsCompiled(renderer,index))return -1;
-    const char* names[]={"u_Uvs","u_paletteId","u_pixelSize","u_Position"};
+    const char* names[]={"u_Uvs","u_paletteId","u_pixelSize","u_Position",
+        "sand1","sand2","sand3","sand4","sandcol","saturation","brightness","tone_factor","tone_dark","tone_light"};
     int kind=legacyShaderKind((GLLegacyRenderer*)renderer,index);
-    for(int i=0;i<4;++i)if(!strcmp(name,names[i])&&((kind==1&&i<3)||(kind==2&&i==3)))return index*4+i;
+    for(int i=0;i<14;++i)if(!strcmp(name,names[i])&&((kind==1&&i<3)||(kind==2&&i==3)||
+        (kind==5&&i>=4&&i<=8)||(kind==6&&i>=9)))return index*16+i;
     return -1;
 }
 static int32_t glShaderGetSamplerIndex(Renderer* renderer,int32_t index,char* name) {
@@ -64,12 +69,14 @@ static int32_t glShaderGetSamplerIndex(Renderer* renderer,int32_t index,char* na
 }
 static void glShaderSetUniformF(Renderer* renderer,int32_t handle,int32_t count,float a,float b,float c,float d) {
     GLLegacyRenderer* gl=(GLLegacyRenderer*)renderer;
-    if(handle<0||(uint32_t)(handle/4)>=renderer->dataWin->shdr.count)return;
-    LegacyShader* state=&gl->shaders[handle/4];
-    if(handle%4==0&&count==4){state->uvs[0]=a;state->uvs[1]=b;state->uvs[2]=c;state->uvs[3]=d;}
-    else if(handle%4==1&&count==1)state->paletteId=a;
-    else if(handle%4==2&&count==2){state->pixelSize[0]=a;state->pixelSize[1]=b;}
-    else if(handle%4==3&&count==1)state->hue=a;
+    if(handle<0||(uint32_t)(handle/16)>=renderer->dataWin->shdr.count)return;
+    LegacyShader* state=&gl->shaders[handle/16];
+    int slot=handle%16;
+    if(slot==0&&count==4){state->uvs[0]=a;state->uvs[1]=b;state->uvs[2]=c;state->uvs[3]=d;}
+    else if(slot==1&&count==1)state->paletteId=a;
+    else if(slot==2&&count==2){state->pixelSize[0]=a;state->pixelSize[1]=b;}
+    else if(slot==3&&count==1)state->hue=a;
+    else if(slot>=4&&slot<14){float values[]={a,b,c,d};memcpy(state->colorUniforms[slot],values,sizeof(values));}
 }
 static void glShaderSetUniformFArray(Renderer* renderer,int32_t handle,float* values,uint32_t count) {
     if(values&&count&&count<=4)glShaderSetUniformF(renderer,handle,count,values[0],count>1?values[1]:0,count>2?values[2]:0,count>3?values[3]:0);
@@ -126,10 +133,10 @@ static void glLegacyShaderBegin(GLLegacyRenderer* gl,int32_t tpagIndex) {
     bool indexed=paletteV>=0;
     GLuint palette=indexed?PS3Textures_getClutTexture():0;
     if(indexed&&kind==1){GLuint mapped=legacyMappedPalette(gl,tpagIndex,state);if(mapped){palette=mapped;paletteV=.5f;}}
-    if(!indexed&&kind!=2&&kind!=3)return;
+    if(!indexed&&kind<2)return;
     glActiveTexture(GL_TEXTURE1);glBindTexture(GL_TEXTURE_2D,palette);glEnable(GL_TEXTURE_2D);glActiveTexture(GL_TEXTURE0);
     GLuint program=gPalettedProgram;
-    if(kind==2||kind==3) {
+    if(kind>=2) {
         if(!gl->colorEffectProgram) {
             extern unsigned char color_effect_fpo[];extern unsigned int color_effect_fpo_len;
             GLuint shader=glCreateShader(GL_FRAGMENT_SHADER);glShaderBinary(1,&shader,PS3GL_SHADER_BINARY_FPO,color_effect_fpo,color_effect_fpo_len);
@@ -144,7 +151,18 @@ static void glLegacyShaderBegin(GLLegacyRenderer* gl,int32_t tpagIndex) {
     glUseProgram(program);
     glUniform1f(program==gPalettedProgram?gPalettedUPaletteVLoc:glGetUniformLocation(program,"uPaletteV"),paletteV);
     glUniform4f(program==gPalettedProgram?gPalettedFogLoc:glGetUniformLocation(program,"uFogColor"),BGR_R(gl->fogColor)/255.f,BGR_G(gl->fogColor)/255.f,BGR_B(gl->fogColor)/255.f,gl->fogEnable?1.f:0.f);
-    if(kind==2||kind==3)glUniform4f(glGetUniformLocation(program,"uEffect"),indexed?1.f:0.f,kind==2?1.f:2.f,state->hue,0);
+    if(kind>=2) {
+        glUniform4f(glGetUniformLocation(program,"uEffect"),indexed?1.f:0.f,(float)(kind-1),state->hue,0);
+        if(kind==5) {
+            const char* names[]={"uSand1","uSand2","uSand3","uSand4","uSandColor"};
+            for(int i=0;i<5;++i){float* v=state->colorUniforms[4+i];glUniform4f(glGetUniformLocation(program,names[i]),v[0],v[1],v[2],0);}
+        } else if(kind==6) {
+            glUniform4f(glGetUniformLocation(program,"uTone"),state->colorUniforms[9][0],state->colorUniforms[10][0],state->colorUniforms[11][0],0);
+            float* dark=state->colorUniforms[12];float* light=state->colorUniforms[13];
+            glUniform4f(glGetUniformLocation(program,"uToneDark"),dark[0],dark[1],dark[2],0);
+            glUniform4f(glGetUniformLocation(program,"uToneLight"),light[0],light[1],light[2],0);
+        }
+    }
 #else
     (void)tpagIndex;
     if(!state||!legacyCompileShader(gl,gl->shaderIndex))return;
@@ -162,6 +180,14 @@ static void glLegacyShaderBegin(GLLegacyRenderer* gl,int32_t tpagIndex) {
         glUniform2fv(glGetUniformLocation(state->program,"u_pixelSize"),1,state->pixelSize);
         glUniform1f(glGetUniformLocation(state->program,"u_paletteId"),state->paletteId);
     } else if(kind==2)glUniform1f(glGetUniformLocation(state->program,"u_Position"),state->hue);
+    else if(kind==5||kind==6) {
+        const char* names[]={"sand1","sand2","sand3","sand4","sandcol","saturation","brightness","tone_factor","tone_dark","tone_light"};
+        for(int i=0;i<10;++i) {
+            int slot=4+i;float* v=state->colorUniforms[slot];GLint location=glGetUniformLocation(state->program,names[i]);
+            if((slot>=4&&slot<=8)||slot>=12)glUniform3f(location,v[0],v[1],v[2]);
+            else glUniform1f(location,v[0]);
+        }
+    }
 #endif
 }
 static void glLegacyShaderEnd(void) {

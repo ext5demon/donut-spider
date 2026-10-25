@@ -59,7 +59,9 @@ typedef struct {
     float fadeTimeRemaining;
     float fadeTotalTime;
     float startGain;
+    float voiceGain, voicePitch; // independent of the sound asset/group defaults
     int32_t priority;
+    int32_t emitterId;
 
     // Streaming state (only valid when streaming == true)
     bool paused;
@@ -81,6 +83,7 @@ typedef struct {
     bool active;
     char* filePath; // resolved file path (owned, freed on destroy)
     float lengthSeconds; // -1 until queried or played
+    float gain, pitch;
 } AudioStreamEntry;
 
 typedef struct {
@@ -104,6 +107,8 @@ typedef struct {
     ALSoundBuffer soundCache[AL_SOUND_CACHE_ENTRIES];
     size_t soundCacheBytes;
     uint64_t soundCacheClock, soundCacheHits, soundCacheMisses;
+    struct { bool active; int32_t id; float gain; } emitters[64];
+    int32_t nextEmitterId;
 
 } AlAudioSystem;
 

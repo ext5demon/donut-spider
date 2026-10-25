@@ -38,5 +38,20 @@ int main(void) {
     free(data.path.paths);
     for(ptrdiff_t i=0;i<arrlen(runner.mpGridPool);++i)free(runner.mpGridPool[i].cells);
     arrfree(runner.mpGridPool);
+    // Binary interval lookup must match the old linear scan, including repeated
+    // cumulative lengths at stationary points, without changing interpolation.
+    InternalPathPoint nodes[4096];
+    for(int i=0;i<4096;++i)nodes[i]=(InternalPathPoint){.x=i,.y=i*2,.speed=100+i,.l=i/2};
+    GamePath curve={.internalPoints=nodes,.internalPointCount=4096,.length=nodes[4095].l};
+    for(int i=0;i<=10000;++i) {
+        float t=(float)i/10000;PathPositionResult got=GamePath_getPosition(&curve,t);
+        if(i==0){assert(got.x==0);continue;}
+        if(i==10000){assert(got.x==4095);continue;}
+        float distance=curve.length*t;int pos=0;
+        while(pos<4094&&distance>=nodes[pos+1].l)++pos;
+        float expected=nodes[pos].x;
+        if(nodes[pos+1].l!=nodes[pos].l)expected+=(distance-nodes[pos].l)/(nodes[pos+1].l-nodes[pos].l);
+        assert(fabsf(got.x-expected)<.001f&&fabsf(got.y-expected*2)<.002f);
+    }
     puts("PASS: grid routes replace closed/curved paths and reach exact relative NPC destinations");
 }

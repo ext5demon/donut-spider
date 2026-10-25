@@ -124,7 +124,7 @@ static SoundInstance* findFreeSlot(AlAudioSystem* ma) {
         if (inst->streaming)
             continue;
 
-        if (!alSourceIsPlaying(inst->alSource)) {
+        if (!inst->paused && !alSourceIsPlaying(inst->alSource)) {
             if (best == nullptr || best->priority > inst->priority) {
                 best = inst;
             }
@@ -399,8 +399,15 @@ static void maUpdate(AudioSystem* audio, float deltaTime) {
     }
 }
 
-static int32_t maPlaySound(AudioSystem* audio, int32_t soundIndex, int32_t priority, bool loop) {
+static int32_t alEmitterSlot(AlAudioSystem* ma, int32_t id) {
+    for (int i=0;i<64;++i) if (ma->emitters[i].active && ma->emitters[i].id==id) return i;
+    return -1;
+}
+
+static int32_t alPlaySoundWithEmitter(AudioSystem* audio, int32_t soundIndex, int32_t priority, bool loop, int32_t emitter) {
     AlAudioSystem* ma = (AlAudioSystem*) audio;
+    int32_t emitterSlot=alEmitterSlot(ma,emitter);
+    if (emitter>=0 && emitterSlot<0) return -1;
 
     if (!ma->alDevice || !ma->alContext) return -1;
 
@@ -556,8 +563,9 @@ static int32_t maPlaySound(AudioSystem* audio, int32_t soundIndex, int32_t prior
     }
 
     // Apply properties
-    float volume = isDynamicStream ? 1.0f : sound->volume * AudioSystem_getGroupGain(audio, sound->audioGroup);
-    float pitch = isDynamicStream ? 1.0f : sound->pitch;
+    float volume = isDynamicStream ? ma->streams[soundIndex-AUDIO_STREAM_INDEX_BASE].gain : sound->volume * AudioSystem_getGroupGain(audio, sound->audioGroup);
+    if (emitterSlot>=0) volume*=ma->emitters[emitterSlot].gain;
+    float pitch = isDynamicStream ? ma->streams[soundIndex-AUDIO_STREAM_INDEX_BASE].pitch : sound->pitch;
     alSourcef(slot->alSource, AL_GAIN, volume);
 
     if (pitch != 1.0f) {
@@ -583,12 +591,23 @@ static int32_t maPlaySound(AudioSystem* audio, int32_t soundIndex, int32_t prior
     slot->fadeTimeRemaining = 0.0f;
     slot->fadeTotalTime = 0.0f;
     slot->startGain = volume;
+    slot->voiceGain = 1.0f;
+    slot->voicePitch = 1.0f;
     slot->priority = priority;
+    slot->emitterId = emitter;
 
 
     alSourcePlay(slot->alSource);
 
     return slot->instanceId;
+}
+
+static int32_t maPlaySound(AudioSystem* audio, int32_t soundIndex, int32_t priority, bool loop) {
+    return alPlaySoundWithEmitter(audio,soundIndex,priority,loop,-1);
+}
+static int32_t maPlaySoundOn(AudioSystem* audio,int32_t emitter,int32_t sound,bool loop,int32_t priority) {
+    if (emitter<0) return -1;
+    return alPlaySoundWithEmitter(audio,sound,priority,loop,emitter);
 }
 
 static void maStopSound(AudioSystem* audio, int32_t soundOrInstance) {
@@ -629,17 +648,30 @@ static bool maIsPlaying(AudioSystem* audio, int32_t soundOrInstance) {
         if (inst->streaming)
             return inst->active;
 
-        return alSourceIsPlaying(inst->alSource);
+        return inst->paused || alSourceIsPlaying(inst->alSource);
     } else {
         // Check if any instance of this sound resource is playing
         repeat(MAX_SOUND_INSTANCES, i) {
             SoundInstance* inst = &ma->instances[i];
             if (!inst->active || inst->soundIndex != soundOrInstance) continue;
             if (inst->streaming) return true;
-            if (alSourceIsPlaying(inst->alSource)) return true;
+            if (inst->paused || alSourceIsPlaying(inst->alSource)) return true;
         }
         return false;
     }
+}
+
+static bool maIsPaused(AudioSystem* audio, int32_t soundOrInstance) {
+    AlAudioSystem* ma = (AlAudioSystem*) audio;
+    if (isSoundInstance(soundOrInstance)) {
+        SoundInstance* inst=findInstanceById(ma,soundOrInstance);
+        return inst != nullptr && inst->paused;
+    }
+    repeat(MAX_SOUND_INSTANCES,i) {
+        SoundInstance* inst=&ma->instances[i];
+        if (inst->active && inst->soundIndex==soundOrInstance && inst->paused) return true;
+    }
+    return false;
 }
 
 static void maPauseSound(AudioSystem* audio, int32_t soundOrInstance) {
@@ -667,14 +699,14 @@ static void maResumeSound(AudioSystem* audio, int32_t soundOrInstance) {
 
     if (isSoundInstance(soundOrInstance)) {
         SoundInstance* inst = findInstanceById(ma, soundOrInstance);
-        if (inst != nullptr) {
+        if (inst != nullptr && inst->paused) {
             inst->paused = false;
             alSourcePlay(inst->alSource);
         }
     } else {
         repeat(MAX_SOUND_INSTANCES, i) {
             SoundInstance* inst = &ma->instances[i];
-            if (inst->active && inst->soundIndex == soundOrInstance) {
+            if (inst->active && inst->soundIndex == soundOrInstance && inst->paused) {
                 inst->paused = false;
                 alSourcePlay(inst->alSource);
             }
@@ -699,7 +731,7 @@ static void maResumeAll(AudioSystem* audio) {
 
     repeat(MAX_SOUND_INSTANCES, i) {
         SoundInstance* inst = &ma->instances[i];
-        if (inst->active) {
+        if (inst->active && inst->paused) {
             inst->paused = false;
             alSourcePlay(inst->alSource);
         }
@@ -733,108 +765,134 @@ static void alResume(AudioSystem* audio) {
     }
 }
 
-static void maSetSoundGain(AudioSystem* audio, int32_t soundOrInstance, float gain, uint32_t timeMs) {
-    AlAudioSystem* ma = (AlAudioSystem*) audio;
-
-    if (isSoundInstance(soundOrInstance)) {
-        SoundInstance* inst = findInstanceById(ma, soundOrInstance);
-        if (inst != nullptr) {
-            if (timeMs == 0) {
-                inst->currentGain = gain;
-                inst->targetGain = gain;
-                inst->fadeTimeRemaining = 0.0f;
-                alSourcef(inst->alSource, AL_GAIN, gain);
-            } else {
-                inst->startGain = inst->currentGain;
-                inst->targetGain = gain;
-                inst->fadeTotalTime = (float) timeMs / 1000.0f;
-                inst->fadeTimeRemaining = inst->fadeTotalTime;
-            }
+// Resource properties persist even when no voice is playing. Voices keep their
+// own multipliers so changing an asset/group does not erase a muted guitar stem.
+static Sound* alSoundAsset(AlAudioSystem* ma, int32_t id) {
+    DataWin* dw=ma->base.audioGroups[0];
+    return id>=0 && (uint32_t)id<dw->sond.count ? &dw->sond.sounds[id] : nullptr;
+}
+static AudioStreamEntry* alStreamAsset(AlAudioSystem* ma, int32_t id) {
+    int32_t slot=id-AUDIO_STREAM_INDEX_BASE;
+    return slot>=0 && slot<MAX_AUDIO_STREAMS && ma->streams[slot].active ? &ma->streams[slot] : nullptr;
+}
+static float alAssetGain(AlAudioSystem* ma, int32_t id) {
+    Sound* sound=alSoundAsset(ma,id);
+    AudioStreamEntry* stream=alStreamAsset(ma,id);
+    return sound ? sound->volume*AudioSystem_getGroupGain(&ma->base,sound->audioGroup) : (stream ? stream->gain : 1.0f);
+}
+static float alAssetPitch(AlAudioSystem* ma, int32_t id) {
+    Sound* sound=alSoundAsset(ma,id);
+    AudioStreamEntry* stream=alStreamAsset(ma,id);
+    return sound ? sound->pitch : (stream ? stream->pitch : 1.0f);
+}
+static float alVoiceGainScale(AlAudioSystem* ma, SoundInstance* inst) {
+    int slot=alEmitterSlot(ma,inst->emitterId);
+    return alAssetGain(ma,inst->soundIndex)*(slot>=0?ma->emitters[slot].gain:1.0f);
+}
+static void maSetSoundGain(AudioSystem* audio, int32_t id, float gain, uint32_t timeMs) {
+    if (!isfinite(gain) || gain<0) return;
+    AlAudioSystem* ma=(AlAudioSystem*)audio;
+    if (!isSoundInstance(id)) {
+        Sound* sound=alSoundAsset(ma,id);
+        AudioStreamEntry* stream=alStreamAsset(ma,id);
+        if (sound) sound->volume=gain;
+        else if (stream) stream->gain=gain;
+        else return;
+        repeat(MAX_SOUND_INSTANCES,i) {
+            SoundInstance* inst=&ma->instances[i];
+            if (inst->active && inst->soundIndex==id) maSetSoundGain(audio,inst->instanceId,inst->voiceGain,timeMs);
         }
+        return;
+    }
+    SoundInstance* inst=findInstanceById(ma,id);
+    if (!inst) return;
+    inst->voiceGain=gain;
+    float effective=gain*alVoiceGainScale(ma,inst);
+    inst->targetGain=effective;
+    if (!timeMs) {
+        inst->currentGain=effective;
+        inst->fadeTimeRemaining=0;
+        alSourcef(inst->alSource,AL_GAIN,effective);
     } else {
-        repeat(MAX_SOUND_INSTANCES, i) {
-            SoundInstance* inst = &ma->instances[i];
-            if (inst->active && inst->soundIndex == soundOrInstance) {
-                if (timeMs == 0) {
-                    inst->currentGain = gain;
-                    inst->targetGain = gain;
-                    inst->fadeTimeRemaining = 0.0f;
-                    alSourcef(inst->alSource, AL_GAIN, gain);
-                } else {
-                    inst->startGain = inst->currentGain;
-                    inst->targetGain = gain;
-                    inst->fadeTotalTime = (float) timeMs / 1000.0f;
-                    inst->fadeTimeRemaining = inst->fadeTotalTime;
-                }
-            }
-        }
+        inst->startGain=inst->currentGain;
+        inst->fadeTotalTime=inst->fadeTimeRemaining=(float)timeMs/1000.0f;
     }
 }
-
 static void maSetGroupGain(AudioSystem* audio, int32_t groupIndex, float gain, uint32_t timeMs) {
-    AlAudioSystem* ma = (AlAudioSystem*) audio;
-    DataWin* dw = audio->audioGroups[0];
-    repeat(MAX_SOUND_INSTANCES, i) {
-        SoundInstance* inst = &ma->instances[i];
-        if (!inst->active || inst->soundIndex < 0 || (uint32_t) inst->soundIndex >= dw->sond.count) continue;
-        Sound* sound = &dw->sond.sounds[inst->soundIndex];
-        if (sound->audioGroup == groupIndex) {
-            maSetSoundGain(audio, inst->instanceId, sound->volume * gain, timeMs);
-        }
+    AlAudioSystem* ma=(AlAudioSystem*)audio;
+    AudioSystem_storeGroupGain(audio,groupIndex,gain);
+    repeat(MAX_SOUND_INSTANCES,i) {
+        SoundInstance* inst=&ma->instances[i];
+        Sound* sound=inst->active?alSoundAsset(ma,inst->soundIndex):nullptr;
+        if (sound && sound->audioGroup==groupIndex) maSetSoundGain(audio,inst->instanceId,inst->voiceGain,timeMs);
     }
 }
-
-static float maGetSoundGain(AudioSystem* audio, int32_t soundOrInstance) {
-    AlAudioSystem* ma = (AlAudioSystem*) audio;
-
-    if (isSoundInstance(soundOrInstance)) {
-        SoundInstance* inst = findInstanceById(ma, soundOrInstance);
-        if (inst != nullptr) return inst->currentGain;
-    } else {
-        repeat(MAX_SOUND_INSTANCES, i) {
-            SoundInstance* inst = &ma->instances[i];
-            if (inst->active && inst->soundIndex == soundOrInstance) {
-                return inst->currentGain;
-            }
-        }
+static float maGetSoundGain(AudioSystem* audio, int32_t id) {
+    AlAudioSystem* ma=(AlAudioSystem*)audio;
+    if (isSoundInstance(id)) {
+        SoundInstance* inst=findInstanceById(ma,id);
+        if (!inst) return 0;
+        float scale=alVoiceGainScale(ma,inst);
+        return scale>0 ? inst->currentGain/scale : inst->voiceGain;
     }
-    return 0.0f;
+    Sound* sound=alSoundAsset(ma,id);
+    AudioStreamEntry* stream=alStreamAsset(ma,id);
+    return sound?sound->volume:(stream?stream->gain:0);
+}
+static void maSetSoundPitch(AudioSystem* audio, int32_t id, float pitch) {
+    if (!isfinite(pitch)) return;
+    pitch=fmaxf(1.0f/256.0f,fminf(pitch,256.0f));
+    AlAudioSystem* ma=(AlAudioSystem*)audio;
+    if (!isSoundInstance(id)) {
+        Sound* sound=alSoundAsset(ma,id);
+        AudioStreamEntry* stream=alStreamAsset(ma,id);
+        if (sound) sound->pitch=pitch;
+        else if (stream) stream->pitch=pitch;
+        else return;
+        repeat(MAX_SOUND_INSTANCES,i) {
+            SoundInstance* inst=&ma->instances[i];
+            if (inst->active && inst->soundIndex==id) maSetSoundPitch(audio,inst->instanceId,inst->voicePitch);
+        }
+        return;
+    }
+    SoundInstance* inst=findInstanceById(ma,id);
+    if (!inst) return;
+    inst->voicePitch=pitch;
+    alSourcef(inst->alSource,AL_PITCH,pitch*alAssetPitch(ma,inst->soundIndex));
+}
+static float maGetSoundPitch(AudioSystem* audio, int32_t id) {
+    AlAudioSystem* ma=(AlAudioSystem*)audio;
+    if (isSoundInstance(id)) {
+        SoundInstance* inst=findInstanceById(ma,id);
+        return inst?inst->voicePitch:1.0f;
+    }
+    return alAssetPitch(ma,id);
 }
 
-static void maSetSoundPitch(AudioSystem* audio, int32_t soundOrInstance, float pitch) {
-    AlAudioSystem* ma = (AlAudioSystem*) audio;
-
-    if (isSoundInstance(soundOrInstance)) {
-        SoundInstance* inst = findInstanceById(ma, soundOrInstance);
-        if (inst != nullptr) {
-            alSourcef(inst->alSource, AL_PITCH, pitch);
-        }
-    } else {
-        repeat(MAX_SOUND_INSTANCES, i) {
-            SoundInstance* inst = &ma->instances[i];
-            if (inst->active && inst->soundIndex == soundOrInstance) {
-                alSourcef(inst->alSource, AL_PITCH, pitch);
-            }
-        }
+static int32_t maCreateEmitter(AudioSystem* audio) {
+    AlAudioSystem* ma=(AlAudioSystem*)audio;
+    for(int i=0;i<64;++i) if(!ma->emitters[i].active) {
+        if(ma->nextEmitterId==INT32_MAX) return -1;
+        ma->emitters[i].active=true;ma->emitters[i].id=ma->nextEmitterId++;
+        ma->emitters[i].gain=1;return ma->emitters[i].id;
     }
+    return -1;
 }
-
-static float maGetSoundPitch(AudioSystem* audio, int32_t soundOrInstance) {
-    AlAudioSystem* ma = (AlAudioSystem*) audio;
-
-    float pitch = 1.0f;
-    if (isSoundInstance(soundOrInstance)) {
-        SoundInstance* inst = findInstanceById(ma, soundOrInstance);
-        if (inst != nullptr) alGetSourcef(inst->alSource, AL_PITCH, &pitch);
-    } else {
-        repeat(MAX_SOUND_INSTANCES, i) {
-            SoundInstance* inst = &ma->instances[i];
-            if (inst->active && inst->soundIndex == soundOrInstance) {
-                alGetSourcef(inst->alSource, AL_PITCH, &pitch);
-            }
-        }
+static bool maEmitterExists(AudioSystem* audio,int32_t emitter) { return alEmitterSlot((AlAudioSystem*)audio,emitter)>=0; }
+static void maFreeEmitter(AudioSystem* audio,int32_t emitter) {
+    AlAudioSystem* ma=(AlAudioSystem*)audio;int slot=alEmitterSlot(ma,emitter);
+    if(slot<0)return;
+    repeat(MAX_SOUND_INSTANCES,i) if(ma->instances[i].active&&ma->instances[i].emitterId==emitter)releaseInstance(&ma->instances[i]);
+    ma->emitters[slot].active=false;
+}
+static void maSetEmitterGain(AudioSystem* audio,int32_t emitter,float gain,uint32_t timeMs) {
+    AlAudioSystem* ma=(AlAudioSystem*)audio;int slot=alEmitterSlot(ma,emitter);
+    if(slot<0||!isfinite(gain)||gain<0)return;
+    ma->emitters[slot].gain=gain;
+    repeat(MAX_SOUND_INSTANCES,i) {
+        SoundInstance* inst=&ma->instances[i];
+        if(inst->active&&inst->emitterId==emitter)maSetSoundGain(audio,inst->instanceId,inst->voiceGain,timeMs);
     }
-    return pitch;
 }
 
 // AL_SAMPLE_OFFSET is relative to the current queue, including processed
@@ -1093,6 +1151,7 @@ static int32_t maCreateStream(AudioSystem* audio, const char* filename) {
     ma->streams[freeSlot].active = true;
     ma->streams[freeSlot].filePath = resolved;
     ma->streams[freeSlot].lengthSeconds = -1.0f;
+    ma->streams[freeSlot].gain = ma->streams[freeSlot].pitch = 1.0f;
 
     int32_t streamIndex = AUDIO_STREAM_INDEX_BASE + freeSlot;
     fprintf(stderr, "Audio: Created stream %d for '%s' -> '%s'\n", streamIndex, filename, resolved);
@@ -1148,6 +1207,27 @@ static int32_t maPlaySoundLocked(AudioSystem* audio, int32_t soundIndex, int32_t
     if (ma->serviceMutex) SDL_UnlockMutex(ma->serviceMutex);
     return result;
 }
+static int32_t maPlaySoundOnLocked(AudioSystem* audio,int32_t emitter,int32_t sound,bool loop,int32_t priority) {
+    AlAudioSystem* ma=(AlAudioSystem*)audio;if(ma->serviceMutex)SDL_LockMutex(ma->serviceMutex);
+    int32_t result=maPlaySoundOn(audio,emitter,sound,loop,priority);
+    if(ma->serviceMutex)SDL_UnlockMutex(ma->serviceMutex);return result;
+}
+static int32_t maCreateEmitterLocked(AudioSystem* audio) {
+    AlAudioSystem* ma=(AlAudioSystem*)audio;if(ma->serviceMutex)SDL_LockMutex(ma->serviceMutex);
+    int32_t result=maCreateEmitter(audio);if(ma->serviceMutex)SDL_UnlockMutex(ma->serviceMutex);return result;
+}
+static bool maEmitterExistsLocked(AudioSystem* audio,int32_t emitter) {
+    AlAudioSystem* ma=(AlAudioSystem*)audio;if(ma->serviceMutex)SDL_LockMutex(ma->serviceMutex);
+    bool result=maEmitterExists(audio,emitter);if(ma->serviceMutex)SDL_UnlockMutex(ma->serviceMutex);return result;
+}
+static void maFreeEmitterLocked(AudioSystem* audio,int32_t emitter) {
+    AlAudioSystem* ma=(AlAudioSystem*)audio;if(ma->serviceMutex)SDL_LockMutex(ma->serviceMutex);
+    maFreeEmitter(audio,emitter);if(ma->serviceMutex)SDL_UnlockMutex(ma->serviceMutex);
+}
+static void maSetEmitterGainLocked(AudioSystem* audio,int32_t emitter,float gain,uint32_t timeMs) {
+    AlAudioSystem* ma=(AlAudioSystem*)audio;if(ma->serviceMutex)SDL_LockMutex(ma->serviceMutex);
+    maSetEmitterGain(audio,emitter,gain,timeMs);if(ma->serviceMutex)SDL_UnlockMutex(ma->serviceMutex);
+}
 static void maStopSoundLocked(AudioSystem* audio, int32_t soundOrInstance) {
     AlAudioSystem* ma = (AlAudioSystem*) audio;
     if (ma->serviceMutex) SDL_LockMutex(ma->serviceMutex);
@@ -1164,6 +1244,13 @@ static bool maIsPlayingLocked(AudioSystem* audio, int32_t soundOrInstance) {
     AlAudioSystem* ma = (AlAudioSystem*) audio;
     if (ma->serviceMutex) SDL_LockMutex(ma->serviceMutex);
     bool result = maIsPlaying(audio, soundOrInstance);
+    if (ma->serviceMutex) SDL_UnlockMutex(ma->serviceMutex);
+    return result;
+}
+static bool maIsPausedLocked(AudioSystem* audio, int32_t soundOrInstance) {
+    AlAudioSystem* ma = (AlAudioSystem*) audio;
+    if (ma->serviceMutex) SDL_LockMutex(ma->serviceMutex);
+    bool result = maIsPaused(audio, soundOrInstance);
     if (ma->serviceMutex) SDL_UnlockMutex(ma->serviceMutex);
     return result;
 }
@@ -1273,9 +1360,15 @@ AlAudioSystem* AlAudioSystem_create(void) {
     AlAudioSystemVtable.destroy = maDestroy;
     AlAudioSystemVtable.update = AUDIO_ENTRY(maUpdate);
     AlAudioSystemVtable.playSound = AUDIO_ENTRY(maPlaySound);
+    AlAudioSystemVtable.playSoundOn = AUDIO_ENTRY(maPlaySoundOn);
+    AlAudioSystemVtable.createEmitter = AUDIO_ENTRY(maCreateEmitter);
+    AlAudioSystemVtable.emitterExists = AUDIO_ENTRY(maEmitterExists);
+    AlAudioSystemVtable.freeEmitter = AUDIO_ENTRY(maFreeEmitter);
+    AlAudioSystemVtable.setEmitterGain = AUDIO_ENTRY(maSetEmitterGain);
     AlAudioSystemVtable.stopSound = AUDIO_ENTRY(maStopSound);
     AlAudioSystemVtable.stopAll = AUDIO_ENTRY(maStopAll);
     AlAudioSystemVtable.isPlaying = AUDIO_ENTRY(maIsPlaying);
+    AlAudioSystemVtable.isPaused = AUDIO_ENTRY(maIsPaused);
     AlAudioSystemVtable.pauseSound = AUDIO_ENTRY(maPauseSound);
     AlAudioSystemVtable.resumeSound = AUDIO_ENTRY(maResumeSound);
     AlAudioSystemVtable.pauseAll = AUDIO_ENTRY(maPauseAll);

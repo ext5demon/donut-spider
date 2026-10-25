@@ -11,7 +11,7 @@ static void part(Renderer* r,int32_t t,float l,float top,float w,float h,float x
 int main(void) {
     DataWin dw={0};Renderer renderer={0};RendererVtable api={.drawSpritePart=part};
     int32_t tp=0;Sprite sprite={.textureCount=1,.tpagIndices=&tp};
-    TexturePageItem item={.sourceWidth=100,.sourceHeight=100};
+    TexturePageItem item={.sourceWidth=100,.sourceHeight=100,.targetWidth=100,.targetHeight=100};
     dw.sprt.count=1;dw.sprt.sprites=&sprite;dw.tpag.count=1;dw.tpag.items=&item;
     renderer.dataWin=&dw;renderer.vtable=&api;
     // Queen's perspective strips must not truncate a subpixel width to zero.

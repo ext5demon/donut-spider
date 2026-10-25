@@ -2,6 +2,9 @@
 void main(float4 color:COLOR0,float2 uv:TEXCOORD0,
           uniform sampler2D uIndex:TEXUNIT0,uniform sampler2D uPalette:TEXUNIT1,
           uniform float uPaletteV,uniform float4 uEffect,
+          uniform float4 uSand1,uniform float4 uSand2,uniform float4 uSand3,
+          uniform float4 uSand4,uniform float4 uSandColor,
+          uniform float4 uTone,uniform float4 uToneDark,uniform float4 uToneLight,
           out float4 result) {
     float4 base=tex2D(uIndex,uv);
     if(uEffect.x>.5)base=tex2D(uPalette,float2(base.r*(255.0/256.0)+.5/256.0,uPaletteV));
@@ -13,7 +16,20 @@ void main(float4 color:COLOR0,float2 uv:TEXCOORD0,
         float c=cos(uEffect.z),s=sin(uEffect.z);
         float i=yiq.y*c-yiq.z*s,q=yiq.y*s+yiq.z*c;
         result.rgb=float3(yiq.x+.9563*i+.6210*q,yiq.x-.2721*i-.6474*q,yiq.x-1.1070*i+1.7046*q);
-    } else {
+    } else if(uEffect.y<2.5) {
         result=float4(dot(base.rgb,float3(.21,.71,.07)).xxx,base.a);
+    } else if(uEffect.y<3.5) {
+        result=float4(0,0,0,(1-dot(base.rgb,float3(1.0/3.0,1.0/3.0,1.0/3.0)))*result.a);
+    } else if(uEffect.y<4.5) {
+        float3 color255=floor(base.rgb*255.0);
+        float3 d1=color255-uSand1.rgb,d2=color255-uSand2.rgb;
+        float3 d3=color255-uSand3.rgb,d4=color255-uSand4.rgb;
+        float3 gray=dot(base.rgb,float3(.3,.59,.11)).xxx;
+        if(min(min(dot(d1,d1),dot(d2,d2)),min(dot(d3,d3),dot(d4,d4)))<.000016)gray=uSandColor.rgb;
+        result=float4(gray,base.a);
+    } else {
+        float lum=dot(base.rgb,float3(.3,.59,.11));
+        float3 tone=lerp(uToneDark.rgb,uToneLight.rgb,lum);
+        result=float4(lerp(lum.xxx,base.rgb,uTone.x)*lerp(float3(1,1,1),tone,uTone.z)*uTone.y,base.a);
     }
 }

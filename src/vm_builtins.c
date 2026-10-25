@@ -6463,6 +6463,31 @@ static RValue builtin_audio_play_sound(VMContext* ctx, RValue* args, MAYBE_UNUSE
     return RValue_makeReal((GMLReal) instanceId);
 }
 
+static RValue builtin_audio_emitter_create(VMContext* ctx, MAYBE_UNUSED RValue* args, MAYBE_UNUSED int32_t n) {
+    AudioSystem* audio=getAudioSystem(ctx);
+    return RValue_makeInt32(audio&&audio->vtable->createEmitter?audio->vtable->createEmitter(audio):-1);
+}
+static RValue builtin_audio_emitter_exists(VMContext* ctx, RValue* args, int32_t n) {
+    AudioSystem* audio=getAudioSystem(ctx);
+    return RValue_makeBool(n>=1&&audio&&audio->vtable->emitterExists&&audio->vtable->emitterExists(audio,RValue_toInt32(args[0])));
+}
+static RValue builtin_audio_emitter_free(VMContext* ctx, RValue* args, int32_t n) {
+    AudioSystem* audio=getAudioSystem(ctx);
+    if(n>=1&&audio&&audio->vtable->freeEmitter)audio->vtable->freeEmitter(audio,RValue_toInt32(args[0]));
+    return RValue_makeUndefined();
+}
+static RValue builtin_audio_emitter_gain(VMContext* ctx, RValue* args, int32_t n) {
+    AudioSystem* audio=getAudioSystem(ctx);
+    if(n>=2&&audio&&audio->vtable->setEmitterGain)audio->vtable->setEmitterGain(audio,RValue_toInt32(args[0]),(float)RValue_toReal(args[1]),
+        n>=3?(uint32_t)fmax(0,RValue_toReal(args[2])):0);
+    return RValue_makeUndefined();
+}
+static RValue builtin_audio_play_sound_on(VMContext* ctx, RValue* args, int32_t n) {
+    AudioSystem* audio=getAudioSystem(ctx);
+    if(n<4||!audio||!audio->vtable->playSoundOn||args[1].type==RVALUE_UNDEFINED)return RValue_makeInt32(-1);
+    return RValue_makeInt32(audio->vtable->playSoundOn(audio,RValue_toInt32(args[0]),RValue_toInt32(args[1]),RValue_toBool(args[2]),RValue_toInt32(args[3])));
+}
+
 static RValue builtin_action_sound(VMContext* ctx, RValue* args, MAYBE_UNUSED int32_t argCount) {
     AudioSystem* audio = getAudioSystem(ctx);
     if (audio == nullptr) return RValue_makeReal(-1.0);
@@ -6506,8 +6531,7 @@ static RValue builtin_audio_is_paused(VMContext* ctx, RValue* args, MAYBE_UNUSED
     AudioSystem* audio = getAudioSystem(ctx);
     if (audio == nullptr) return RValue_makeBool(false);
     int32_t soundOrInstance = RValue_toInt32(args[0]);
-    bool playing = audio->vtable->isPlaying(audio, soundOrInstance);
-    return RValue_makeBool(!playing);
+    return RValue_makeBool(audio->vtable->isPaused != nullptr && audio->vtable->isPaused(audio, soundOrInstance));
 }
 
 
@@ -6525,7 +6549,7 @@ static RValue builtin_audio_sound_gain(VMContext* ctx, RValue* args, MAYBE_UNUSE
     if (audio == nullptr) return RValue_makeUndefined();
     int32_t soundOrInstance = RValue_toInt32(args[0]);
     float gain = (float) RValue_toReal(args[1]);
-    uint32_t timeMs = (uint32_t) RValue_toInt32(args[2]);
+    uint32_t timeMs = argCount >= 3 ? (uint32_t) RValue_toInt32(args[2]) : 0;
     audio->vtable->setSoundGain(audio, soundOrInstance, gain, timeMs);
     return RValue_makeUndefined();
 }
@@ -8017,6 +8041,45 @@ static RValue builtin_vertex_end(VMContext* ctx, RValue* args, int32_t argCount)
     if (argCount >= 1) VertexManager_end(getVertexManager(ctx), RValue_toInt32(args[0]));
     return RValue_makeUndefined();
 }
+static RValue builtin_draw_primitive_begin(VMContext* ctx, RValue* args, int32_t argCount) {
+    Runner* runner = ctx->runner;
+    runner->primitiveOpen = argCount >= 1;
+    runner->primitiveKind = argCount >= 1 ? RValue_toInt32(args[0]) : 0;
+    runner->primitiveTexture = argCount >= 2 ? (uint32_t) RValue_toInt32(args[1]) : 0;
+    arrsetlen(runner->primitiveVertices, 0);
+    return RValue_makeUndefined();
+}
+
+static RValue drawPrimitiveVertex(VMContext* ctx, RValue* args, int32_t argCount, bool textured, bool colored) {
+    Runner* runner = ctx->runner;
+    int32_t colorArg = textured ? 4 : 2;
+    if (!runner->primitiveOpen || runner->renderer == nullptr || argCount < (colored ? colorArg + 2 : colorArg)) return RValue_makeUndefined();
+    RendererVertex2D vertex = {
+        .x = (float) RValue_toReal(args[0]), .y = (float) RValue_toReal(args[1]),
+        .u = textured ? (float) RValue_toReal(args[2]) : 0.5f,
+        .v = textured ? (float) RValue_toReal(args[3]) : 0.5f, .q = 1.0f,
+        .color = colored ? (uint32_t) RValue_toInt32(args[colorArg]) : runner->renderer->drawColor,
+        .alpha = colored ? (float) RValue_toReal(args[colorArg + 1]) : runner->renderer->drawAlpha
+    };
+    arrput(runner->primitiveVertices, vertex);
+    return RValue_makeUndefined();
+}
+static RValue builtin_draw_vertex(VMContext* ctx, RValue* args, int32_t n) { return drawPrimitiveVertex(ctx,args,n,false,false); }
+static RValue builtin_draw_vertex_color(VMContext* ctx, RValue* args, int32_t n) { return drawPrimitiveVertex(ctx,args,n,false,true); }
+static RValue builtin_draw_vertex_texture(VMContext* ctx, RValue* args, int32_t n) { return drawPrimitiveVertex(ctx,args,n,true,false); }
+static RValue builtin_draw_vertex_texture_color(VMContext* ctx, RValue* args, int32_t n) { return drawPrimitiveVertex(ctx,args,n,true,true); }
+static RValue builtin_draw_primitive_end(VMContext* ctx, MAYBE_UNUSED RValue* args, MAYBE_UNUSED int32_t n) {
+    Runner* runner = ctx->runner;
+    Renderer* renderer = runner->renderer;
+    if (runner->primitiveOpen && renderer != nullptr && renderer->vtable->drawTexturedVertices != nullptr) {
+        renderer->vtable->drawTexturedVertices(renderer, runner->primitiveTexture, runner->primitiveVertices,
+            (int32_t) arrlen(runner->primitiveVertices), runner->primitiveKind);
+    }
+    runner->primitiveOpen = false;
+    arrsetlen(runner->primitiveVertices, 0);
+    return RValue_makeUndefined();
+}
+
 static RValue builtin_vertex_submit(VMContext* ctx, RValue* args, int32_t argCount) {
     if (argCount >= 3) VertexManager_submit(getVertexManager(ctx), ctx->runner->renderer,
         RValue_toInt32(args[0]), RValue_toInt32(args[1]), (uint32_t) RValue_toInt32(args[2]));
@@ -9907,7 +9970,6 @@ static RValue builtin_draw_sprite_part_ext(VMContext* ctx, RValue* args, MAYBE_U
 }
 
 static RValue builtin_draw_sprite_general(VMContext* ctx, RValue* args, MAYBE_UNUSED int32_t argCount) {
-    logSemiStubbedFunction(ctx, "draw_sprite_general");
     Runner* runner = ctx->runner;
     if (runner->renderer == nullptr) return RValue_makeUndefined();
 
@@ -9929,7 +9991,9 @@ static RValue builtin_draw_sprite_general(VMContext* ctx, RValue* args, MAYBE_UN
         subimg = (int32_t) ctx->currentInstance->imageIndex;
     }
 
-    Renderer_drawSpritePartExt(runner->renderer, spriteIndex, subimg, left, top, width, height, x, y, xscale, yscale, rot, x, y, c1, alpha);
+    Renderer_drawSpriteGeneral(runner->renderer, spriteIndex, subimg, left, top, width, height,
+        x, y, xscale, yscale, rot, c1, (uint32_t) RValue_toInt32(args[12]),
+        (uint32_t) RValue_toInt32(args[13]), (uint32_t) RValue_toInt32(args[14]), alpha);
     return RValue_makeUndefined();
 }
 
@@ -16406,8 +16470,8 @@ static RValue builtin_shader_is_compiled(VMContext* ctx, MAYBE_UNUSED RValue* ar
 
 static RValue builtin_shader_get_name(VMContext* ctx, RValue* args, MAYBE_UNUSED int32_t argCount) {
     int32_t shaderIndex = (int32_t) RValue_toReal(args[0]);
-    Shader* shdr = &ctx->dataWin->shdr.shaders[shaderIndex];
     if (0 > shaderIndex || (uint32_t) shaderIndex >= ctx->dataWin->shdr.count) return RValue_makeString("<undefined>");
+    Shader* shdr = &ctx->dataWin->shdr.shaders[shaderIndex];
     const char* name = shdr->name;
     return RValue_makeString(name != nullptr ? name : "<undefined>");
 }
@@ -16419,13 +16483,17 @@ static RValue builtin_shaders_are_supported(VMContext* ctx, MAYBE_UNUSED RValue*
 static RValue builtin_shader_get_uniform(VMContext* ctx, MAYBE_UNUSED RValue* args, MAYBE_UNUSED int32_t argCount) {
     int32_t ShaderID = (int32_t) RValue_toReal(args[0]);
     char* uniform = RValue_toString(args[1]);
-    return RValue_makeInt32(ctx->runner->renderer->vtable->shaderGetUniform(ctx->runner->renderer, ShaderID, uniform));
+    int32_t handle = ctx->runner->renderer->vtable->shaderGetUniform(ctx->runner->renderer, ShaderID, uniform);
+    free(uniform);
+    return RValue_makeInt32(handle);
 }
 
 static RValue builtin_shader_get_sampler_index(VMContext* ctx, MAYBE_UNUSED RValue* args, MAYBE_UNUSED int32_t argCount) {
     int32_t ShaderID = (int32_t) RValue_toReal(args[0]);
     char* uniform = RValue_toString(args[1]);
-    return RValue_makeInt32(ctx->runner->renderer->vtable->shaderGetSamplerIndex(ctx->runner->renderer, ShaderID, uniform));
+    int32_t handle = ctx->runner->renderer->vtable->shaderGetSamplerIndex(ctx->runner->renderer, ShaderID, uniform);
+    free(uniform);
+    return RValue_makeInt32(handle);
 }
 
 static RValue builtin_texture_set_stage(VMContext* ctx, MAYBE_UNUSED RValue* args, MAYBE_UNUSED int32_t argCount) {
@@ -16989,6 +17057,11 @@ void VMBuiltins_registerAll(VMContext* ctx) {
     VM_registerBuiltin(ctx, "audio_get_name", builtin_audio_get_name);
     VM_registerBuiltin(ctx, "audio_channel_num", builtin_audio_channel_num);
     VM_registerBuiltin(ctx, "audio_play_sound", builtin_audio_play_sound);
+    VM_registerBuiltin(ctx, "audio_emitter_create", builtin_audio_emitter_create);
+    VM_registerBuiltin(ctx, "audio_emitter_exists", builtin_audio_emitter_exists);
+    VM_registerBuiltin(ctx, "audio_emitter_free", builtin_audio_emitter_free);
+    VM_registerBuiltin(ctx, "audio_emitter_gain", builtin_audio_emitter_gain);
+    VM_registerBuiltin(ctx, "audio_play_sound_on", builtin_audio_play_sound_on);
     VM_registerBuiltin(ctx, "audio_stop_sound", builtin_audio_stop_sound);
     VM_registerBuiltin(ctx, "audio_stop_all", builtin_audio_stop_all);
     VM_registerBuiltin(ctx, "audio_is_playing", builtin_audio_is_playing);
@@ -17174,6 +17247,15 @@ void VMBuiltins_registerAll(VMContext* ctx) {
     VM_registerBuiltin(ctx, "vertex_texcoord", builtin_vertex_texcoord);
     VM_registerBuiltin(ctx, "vertex_end", builtin_vertex_end);
     VM_registerBuiltin(ctx, "vertex_submit", builtin_vertex_submit);
+    VM_registerBuiltin(ctx, "draw_primitive_begin", builtin_draw_primitive_begin);
+    VM_registerBuiltin(ctx, "draw_primitive_begin_texture", builtin_draw_primitive_begin);
+    VM_registerBuiltin(ctx, "draw_primitive_end", builtin_draw_primitive_end);
+    VM_registerBuiltin(ctx, "draw_vertex", builtin_draw_vertex);
+    VM_registerBuiltin(ctx, "draw_vertex_color", builtin_draw_vertex_color);
+    VM_registerBuiltin(ctx, "draw_vertex_colour", builtin_draw_vertex_color);
+    VM_registerBuiltin(ctx, "draw_vertex_texture", builtin_draw_vertex_texture);
+    VM_registerBuiltin(ctx, "draw_vertex_texture_color", builtin_draw_vertex_texture_color);
+    VM_registerBuiltin(ctx, "draw_vertex_texture_colour", builtin_draw_vertex_texture_color);
 
     // Window
     VM_registerBuiltin(ctx, "window_get_fullscreen", builtin_window_get_fullscreen);

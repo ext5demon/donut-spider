@@ -2123,17 +2123,20 @@ static void glTextureSetStage(Renderer* renderer, int32_t slot, uint32_t texHand
 static void glLegacyDrawTexturedVertices(Renderer* renderer, uint32_t texHandle,
                                          const RendererVertex2D* vertices,
                                          int32_t vertexCount, int32_t primitiveKind) {
-    if (vertices == nullptr || vertexCount < 3 || primitiveKind != 5) return;
+    static const GLenum modes[] = {GL_POINTS, GL_POINTS, GL_LINES, GL_LINE_STRIP,
+        GL_TRIANGLES, GL_TRIANGLE_STRIP, GL_TRIANGLE_FAN};
+    if (vertices == nullptr || vertexCount <= 0 || primitiveKind < 1 || primitiveKind > 6) return;
     GLLegacyRenderer* gl = (GLLegacyRenderer*) renderer;
     TexturePageItem* tpag = nullptr;
     GLuint texId = 0;
     int32_t w = 0, h = 0;
-    if (!glLegacyResolveTextureHandle(gl, texHandle, &tpag, &texId, &w, &h)) return;
+    if (texHandle == 0) texId = gl->whiteTexture;
+    else if (!glLegacyResolveTextureHandle(gl, texHandle, &tpag, &texId, &w, &h)) return;
 
     glBindTexture(GL_TEXTURE_2D, texId);
     int32_t tpagIndex = (texHandle & GL_SURFACE_TEXTURE_FLAG) ? -1 : (int32_t) texHandle - 1;
     PS3_PALETTED_BEGIN(tpagIndex);
-    glBegin(GL_TRIANGLE_STRIP);
+    glBegin(modes[primitiveKind]);
     for (int32_t i = 0; i < vertexCount; ++i) {
         const RendererVertex2D* vertex = &vertices[i];
         glColor4f((float) BGR_R(vertex->color) / 255.0f,

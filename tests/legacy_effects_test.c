@@ -96,6 +96,32 @@ int main(void) {
     unsigned char pixels[4*4*4];glReadPixels(0,0,4,4,GL_RGBA,GL_UNSIGNED_BYTE,pixels);
     for(int y=0;y<4;++y)for(int x=0;x<4;++x)
         assert(pixels[(y*4+x)*4+3]==((x<2 && y>=2)?255:0));
+    // Tenna's rings are a brightness-derived shadow mask, not white circles.
+    // Exercise the legacy backend's real shader selection and draw activation.
+    Shader shaderDefs[3]={
+        {.present=true,.name="shd_luminosity_to_transparency",.glsl_Fragment="#version 120\nuniform sampler2D gm_BaseTexture;varying vec2 v_vTexcoord;varying vec4 v_vColour;void main(){vec4 s=texture2D(gm_BaseTexture,v_vTexcoord);gl_FragColor=vec4(0,0,0,(1-dot(s.rgb,vec3(1.0/3.0)))*s.a*v_vColour.a);}"},
+        {.present=true,.name="shd_grayscalesand",.glsl_Fragment="#version 120\nuniform sampler2D gm_BaseTexture;uniform vec3 sand1,sand2,sand3,sand4,sandcol;varying vec2 v_vTexcoord;void main(){vec4 s=texture2D(gm_BaseTexture,v_vTexcoord);vec3 c=vec3(dot(s.rgb,vec3(.3,.59,.11)));vec3 b=floor(s.rgb*255.0+.001);if(distance(b,sand1)<.004||distance(b,sand2)<.004||distance(b,sand3)<.004||distance(b,sand4)<.004)c=sandcol;gl_FragColor=vec4(c,s.a);}"},
+        {.present=true,.name="shd_tone",.glsl_Fragment="#version 120\nuniform sampler2D gm_BaseTexture;uniform float saturation,brightness,tone_factor;uniform vec3 tone_dark,tone_light;varying vec2 v_vTexcoord;void main(){vec4 s=texture2D(gm_BaseTexture,v_vTexcoord);float l=dot(s.rgb,vec3(.3,.59,.11));gl_FragColor=vec4(mix(vec3(l),s.rgb,saturation)*mix(vec3(1),mix(tone_dark,tone_light,l),tone_factor)*brightness,s.a);}"}
+    };
+    DataWin data={.shdr={.count=3,.shaders=shaderDefs}};LegacyShader shaderStates[3]={0};
+    renderer.base.dataWin=&data;renderer.shaders=shaderStates;renderer.shaderIndex=-1;
+    glMatrixMode(GL_PROJECTION);glLoadIdentity();glMatrixMode(GL_MODELVIEW);glLoadIdentity();
+    glEnable(GL_TEXTURE_2D);glDisable(GL_BLEND);glBindTexture(GL_TEXTURE_2D,sprite);glColor4f(1,1,1,.5f);
+    glGpuSetShader(base,0);assert(base->currentShader==0);glLegacyShaderBegin(&renderer,-1);drawQuad();glLegacyShaderEnd();
+    glReadPixels(1,1,1,1,GL_RGBA,GL_UNSIGNED_BYTE,pixel);
+    assert(pixel[0]==0&&pixel[1]==0&&pixel[2]==0&&abs((int)pixel[3]-17)<=1);
+    glGpuSetShader(base,1);
+    int sand=glShaderGetUniform(base,1,"sand1"),gray=glShaderGetUniform(base,1,"sandcol");assert(sand>=0&&gray>=0);
+    glShaderSetUniformF(base,sand,3,200,100,50,0);glShaderSetUniformF(base,gray,3,.82f,.82f,.82f,0);
+    glLegacyShaderBegin(&renderer,-1);drawQuad();glLegacyShaderEnd();glReadPixels(1,1,1,1,GL_RGBA,GL_UNSIGNED_BYTE,pixel);
+    assert(abs((int)pixel[0]-209)<=1&&pixel[0]==pixel[1]&&pixel[1]==pixel[2]&&pixel[3]==64);
+    glGpuSetShader(base,2);
+    glShaderSetUniformF(base,glShaderGetUniform(base,2,"saturation"),1,0,0,0,0);
+    glShaderSetUniformF(base,glShaderGetUniform(base,2,"brightness"),1,.5f,0,0,0);
+    glLegacyShaderBegin(&renderer,-1);drawQuad();glLegacyShaderEnd();glReadPixels(1,1,1,1,GL_RGBA,GL_UNSIGNED_BYTE,pixel);
+    assert(abs((int)pixel[0]-62)<=1&&pixel[0]==pixel[1]&&pixel[1]==pixel[2]&&pixel[3]==64);
+    glGpuResetShader(base);assert(base->currentShader==-1&&glGetError()==GL_NO_ERROR);
+    for(int i=0;i<3;++i)glDeleteProgram(shaderStates[i].program);
     glDeleteFramebuffers(1, &fbo); glDeleteTextures(1, &sprite); glDeleteTextures(1, &target);
     glfwDestroyWindow(window); glfwTerminate();
     puts("PASS: fog/alpha, blend round-trip, pixel readback orientation/bounds/state");

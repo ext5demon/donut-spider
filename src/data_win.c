@@ -257,11 +257,16 @@ PathPositionResult GamePath_getPosition(GamePath* path, float t) {
         return result;
     }
 
-    // Get the right interval via linear scan
+    // Cumulative distances are sorted. Bullet curves can contain thousands of
+    // internal points; find the same interval without scanning from the start
+    // for every moving projectile, every frame.
     float l = path->length * t;
     uint32_t pos = 0;
-    while (path->internalPointCount - 2 > pos && l >= path->internalPoints[pos + 1].l) {
-        pos++;
+    uint32_t high = path->internalPointCount - 2;
+    while (pos < high) {
+        uint32_t mid = pos + (high - pos + 1) / 2;
+        if (l >= path->internalPoints[mid].l) pos = mid;
+        else high = mid - 1;
     }
 
     InternalPathPoint* node = &path->internalPoints[pos];

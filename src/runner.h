@@ -450,6 +450,10 @@ struct Runner {
     VideoPlayer* videoPlayer;
     ParticleManager* particleManager;
     VertexManager* vertexManager;
+    RendererVertex2D* primitiveVertices; // reusable draw_primitive_begin/end vertices
+    int32_t primitiveKind;
+    uint32_t primitiveTexture;
+    bool primitiveOpen;
     Room* currentRoom;
     int32_t currentRoomIndex;
     int32_t currentRoomOrderPosition;

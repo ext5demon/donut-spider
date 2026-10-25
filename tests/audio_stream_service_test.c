@@ -50,6 +50,7 @@ int main(int argc, char** argv) {
     assert(findInstanceById(ma, sound)->underrunCount == 0);
     SDL_UnlockMutex(ma->serviceMutex);
     v->pauseSound(audio, sound);
+    assert(v->isPlaying(audio,sound)&&v->isPaused(audio,sound)&&v->isPaused(audio,stream));
     float paused = v->getTrackPosition(audio, sound);
     SDL_Delay(150);
     assert(fabsf(v->getTrackPosition(audio, sound) - paused) < 0.04f);
@@ -58,8 +59,12 @@ int main(int argc, char** argv) {
     SDL_Delay(100);
     assert(fabsf(v->getTrackPosition(audio, sound) - 2.1f) < 0.04f);
     v->resumeSound(audio, sound);
+    assert(!v->isPaused(audio,sound));
     SDL_Delay(200);
     assert(v->getTrackPosition(audio, sound) > 2.2f);
+    float running=v->getTrackPosition(audio,sound);
+    for(int i=0;i<5;++i) v->resumeSound(audio,sound);
+    SDL_Delay(80);assert(v->getTrackPosition(audio,sound)>=running);
     for (int i = 0; i < 20; ++i) {
         v->setTrackPosition(audio, sound, i * 0.03f);
         v->pauseSound(audio, sound); v->resumeSound(audio, sound);

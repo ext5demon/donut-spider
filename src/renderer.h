@@ -313,7 +313,9 @@ static inline void Renderer_drawSpritePartExt(Renderer* renderer, int32_t sprite
 
     TexturePageItem* tpag = &dw->tpag.items[tpagIndex];
 
-    // Clip region to TPAG bounds (same as Renderer_drawSpritePart)
+    // GML regions use original sprite pixels. Atlas entries may be trimmed
+    // and downscaled: clip in target space, then convert to source texels.
+    if (tpag->targetWidth == 0 || tpag->targetHeight == 0 || tpag->sourceWidth == 0 || tpag->sourceHeight == 0) return;
     if (tpag->targetX > left) {
         float off = tpag->targetX - left;
         x += (float) off * xscale;
@@ -332,11 +334,53 @@ static inline void Renderer_drawSpritePartExt(Renderer* renderer, int32_t sprite
         top -= tpag->targetY;
     }
 
-    if (width > tpag->sourceWidth - left) width = tpag->sourceWidth - left;
-    if (height > tpag->sourceHeight - top) height = tpag->sourceHeight - top;
+    if (width > tpag->targetWidth - left) width = tpag->targetWidth - left;
+    if (height > tpag->targetHeight - top) height = tpag->targetHeight - top;
     if (0 >= width || 0 >= height) return;
 
-    renderer->vtable->drawSpritePart(renderer, tpagIndex, left, top, width, height, x, y, xscale, yscale, angleDeg, pivotX, pivotY, color, alpha);
+    float sx = (float) tpag->sourceWidth / tpag->targetWidth;
+    float sy = (float) tpag->sourceHeight / tpag->targetHeight;
+    renderer->vtable->drawSpritePart(renderer, tpagIndex, left*sx, top*sy, width*sx, height*sy, x, y, xscale/sx, yscale/sy, angleDeg, pivotX, pivotY, color, alpha);
+}
+
+static inline uint32_t Renderer_quadColor(uint32_t c1, uint32_t c2, uint32_t c3, uint32_t c4, float u, float v) {
+    uint32_t color = 0;
+    for (int shift = 0; shift < 24; shift += 8) {
+        float top = (float)((c1 >> shift) & 255)*(1-u) + (float)((c2 >> shift) & 255)*u;
+        float bottom = (float)((c4 >> shift) & 255)*(1-u) + (float)((c3 >> shift) & 255)*u;
+        color |= (uint32_t) lroundf(top*(1-v)+bottom*v) << shift;
+    }
+    return color;
+}
+
+static inline void Renderer_drawSpriteGeneral(Renderer* renderer, int32_t sprite, int32_t subimg,
+        float left, float top, float width, float height, float x, float y, float xs, float ys,
+        float angle, uint32_t c1, uint32_t c2, uint32_t c3, uint32_t c4, float alpha) {
+    if (c1==c2 && c1==c3 && c1==c4) {
+        Renderer_drawSpritePartExt(renderer,sprite,subimg,left,top,width,height,x,y,xs,ys,angle,x,y,c1,alpha);
+        return;
+    }
+    int32_t id = Renderer_resolveTPAGIndex(renderer->dataWin,sprite,subimg);
+    if (id < 0 || width <= 0 || height <= 0 || !renderer->vtable->drawTexturedVertices ||
+        !renderer->vtable->spriteGetTexture || !renderer->vtable->textureGetUVs) return;
+    TexturePageItem* item = &renderer->dataWin->tpag.items[id];
+    float l=fmaxf(left,item->targetX), t=fmaxf(top,item->targetY);
+    float r=fminf(left+width,item->targetX+item->targetWidth), b=fminf(top+height,item->targetY+item->targetHeight);
+    if (r<=l || b<=t || !item->targetWidth || !item->targetHeight) return;
+    uint32_t texture=renderer->vtable->spriteGetTexture(renderer,id);
+    float uv[4];
+    if (!texture || !renderer->vtable->textureGetUVs(renderer,texture,uv)) return;
+    float px[]={l,r,l,r}, py[]={t,t,b,b};
+    float radians=-angle*(float)M_PI/180.0f, co=cosf(radians), si=sinf(radians);
+    RendererVertex2D vertices[4];
+    for (int i=0;i<4;++i) {
+        float dx=(px[i]-left)*xs, dy=(py[i]-top)*ys;
+        vertices[i]=(RendererVertex2D){.x=x+dx*co-dy*si,.y=y+dx*si+dy*co,
+            .u=uv[0]+(uv[2]-uv[0])*(px[i]-item->targetX)/item->targetWidth,
+            .v=uv[1]+(uv[3]-uv[1])*(py[i]-item->targetY)/item->targetHeight,.q=1,
+            .color=Renderer_quadColor(c1,c2,c3,c4,(px[i]-left)/width,(py[i]-top)/height),.alpha=alpha};
+    }
+    renderer->vtable->drawTexturedVertices(renderer,texture,vertices,4,5);
 }
 
 // Partial draw: draw_sprite_part(sprite, subimg, left, top, width, height, x, y)
@@ -682,6 +726,21 @@ static inline void Renderer_drawEllipseColor(Renderer* renderer, float cx, float
     float step = 6.2831853f / (float) segments;
     float prevX = cx + rx;
     float prevY = cy;
+
+    // Submit an entire circle in one draw. Per-segment begin/end calls are
+    // especially expensive for the repeating rings and spotlights on RSX.
+    if (renderer->vtable->drawTexturedVertices != nullptr) {
+        RendererVertex2D vertices[66];
+        int count=0;
+        if (!outline) vertices[count++]=(RendererVertex2D){.x=cx,.y=cy,.u=.5f,.v=.5f,.q=1,.color=col1,.alpha=renderer->drawAlpha};
+        for (int i=0;i<=segments;++i) {
+            float angle=step*i;
+            vertices[count++]=(RendererVertex2D){.x=cx+rx*cosf(angle),.y=cy+ry*sinf(angle),
+                .u=.5f,.v=.5f,.q=1,.color=col2,.alpha=renderer->drawAlpha};
+        }
+        renderer->vtable->drawTexturedVertices(renderer,0,vertices,count,outline?3:6);
+        return;
+    }
 
     for (int32_t i = 1; segments >= i; i++) {
         float angle = step * (float) i;

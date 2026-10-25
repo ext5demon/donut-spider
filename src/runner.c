@@ -1766,6 +1766,9 @@ static void cleanupState(Runner* runner) {
 
     VertexManager_free(runner->vertexManager);
     runner->vertexManager = nullptr;
+    arrfree(runner->primitiveVertices);
+    runner->primitiveVertices = nullptr;
+    runner->primitiveOpen = false;
 
     // Drop VM-side RValue holders (globals, stack, call frames) BEFORE freeing any Instance memory. This way any RVALUE_STRUCT refs decrement against still-live struct memory; otherwise we'd free a struct here and then have VM_free's later VM_reset try to decRef a dangling pointer.
     if (runner->vmContext != nullptr) {

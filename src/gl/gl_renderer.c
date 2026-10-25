@@ -2636,30 +2636,54 @@ static bool glResolveTextureHandle(GLRenderer* gl, uint32_t texHandle, TexturePa
     return resolveSpriteTexture(gl, (int32_t) texHandle - 1, outTpag, outTexId, outTexW, outTexH);
 }
 
+static void glEmitPrimitiveTriangle(GLRenderer* gl, GLuint texture, const RendererVertex2D* a,
+        const RendererVertex2D* b, const RendererVertex2D* c) {
+    flushIfNeededAndSetActiveState(gl,BATCHTYPE_TRIANGLE,texture);
+    Vertex* dst=gl->vertexData+gl->batchCount*3;
+    const RendererVertex2D* src[]={a,b,c};
+    for (int i=0;i<3;++i) dst[i]=(Vertex){.x=src[i]->x,.y=src[i]->y,.z=0,
+        .u=src[i]->u,.v=src[i]->v,.r=BGR_R(src[i]->color),.g=BGR_G(src[i]->color),
+        .b=BGR_B(src[i]->color),.a=floatToUnormByte(src[i]->alpha)};
+    ++gl->batchCount;
+}
+
 static void glDrawTexturedVertices(Renderer* renderer, uint32_t texHandle,
                                    const RendererVertex2D* vertices,
                                    int32_t vertexCount, int32_t primitiveKind) {
-    // GameMaker's pr_trianglestrip constant is 5. Chapter 4 submits exactly
-    // four vertices in TL,TR,BL,BR order for its fixed-perspective quad.
-    if (vertices == nullptr || vertexCount != 4 || primitiveKind != 5) return;
+    if (vertices == nullptr || vertexCount <= 0 || primitiveKind < 1 || primitiveKind > 6) return;
     GLRenderer* gl = (GLRenderer*) renderer;
     TexturePageItem* tpag = nullptr;
     GLuint texId = 0;
     int32_t texW = 0, texH = 0;
-    if (!glResolveTextureHandle(gl, texHandle, &tpag, &texId, &texW, &texH)) return;
+    if (texHandle==0) texId=gl->whiteTexture;
+    else if (!glResolveTextureHandle(gl, texHandle, &tpag, &texId, &texW, &texH)) return;
 
-    const RendererVertex2D* tl = &vertices[0];
-    const RendererVertex2D* tr = &vertices[1];
-    const RendererVertex2D* bl = &vertices[2];
-    const RendererVertex2D* br = &vertices[3];
-    emitTexturedQuad(gl, texId,
-        tl->x, tl->y, tr->x, tr->y, br->x, br->y, bl->x, bl->y,
-        tl->u, tl->v, br->u, br->v,
-        (uint8_t) BGR_R(tl->color), (uint8_t) BGR_G(tl->color), (uint8_t) BGR_B(tl->color),
-        (uint8_t) BGR_R(tr->color), (uint8_t) BGR_G(tr->color), (uint8_t) BGR_B(tr->color),
-        (uint8_t) BGR_R(br->color), (uint8_t) BGR_G(br->color), (uint8_t) BGR_B(br->color),
-        (uint8_t) BGR_R(bl->color), (uint8_t) BGR_G(bl->color), (uint8_t) BGR_B(bl->color),
-        tl->alpha);
+    if (primitiveKind>=4) {
+        for (int i=2;i<vertexCount;i+=(primitiveKind==4?3:1)) {
+            int a=primitiveKind==6?0:i-2, b=i-1;
+            if (primitiveKind==5 && (i&1)) { int tmp=a;a=b;b=tmp; }
+            glEmitPrimitiveTriangle(gl,texId,&vertices[a],&vertices[b],&vertices[i]);
+        }
+    } else {
+        for (int i=0;i<vertexCount;i+=(primitiveKind==2?2:1)) {
+            if (primitiveKind!=1 && i+1>=vertexCount) break;
+            RendererVertex2D a=vertices[i],b=primitiveKind==1?a:vertices[i+1],c,d;
+            if (primitiveKind==1) {
+                c=a;d=a;b.x+=1;c.x+=1;c.y+=1;d.y+=1;
+                glEmitPrimitiveTriangle(gl,texId,&a,&b,&d);
+                glEmitPrimitiveTriangle(gl,texId,&b,&c,&d);
+                continue;
+            }
+            float dx=b.x-a.x,dy=b.y-a.y,length=sqrtf(dx*dx+dy*dy);
+            float nx=length>0?-dy*.5f/length:.5f, ny=length>0?dx*.5f/length:0;
+            c=b;d=a;a.x+=nx;a.y+=ny;b.x+=nx;b.y+=ny;
+            c.x-=nx;c.y-=ny;d.x-=nx;d.y-=ny;
+            glEmitPrimitiveTriangle(gl,texId,&a,&b,&d);
+            glEmitPrimitiveTriangle(gl,texId,&b,&c,&d);
+        }
+    }
+    return;
+
 }
 
 // surface_get_texture: returns a handle that texture_get_texel_*/texture_get_uvs/texture_set_stage resolve.

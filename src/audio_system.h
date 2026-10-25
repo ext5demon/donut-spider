@@ -19,9 +19,15 @@ typedef struct {
     void (*destroy)(AudioSystem* audio);
     void (*update)(AudioSystem* audio, float deltaTime);
     int32_t (*playSound)(AudioSystem* audio, int32_t soundIndex, int32_t priority, bool loop);
+    int32_t (*createEmitter)(AudioSystem* audio);
+    bool (*emitterExists)(AudioSystem* audio, int32_t emitter);
+    void (*freeEmitter)(AudioSystem* audio, int32_t emitter);
+    void (*setEmitterGain)(AudioSystem* audio, int32_t emitter, float gain, uint32_t timeMs);
+    int32_t (*playSoundOn)(AudioSystem* audio, int32_t emitter, int32_t sound, bool loop, int32_t priority);
     void (*stopSound)(AudioSystem* audio, int32_t soundOrInstance);
     void (*stopAll)(AudioSystem* audio);
     bool (*isPlaying)(AudioSystem* audio, int32_t soundOrInstance);
+    bool (*isPaused)(AudioSystem* audio, int32_t soundOrInstance);
     void (*pauseSound)(AudioSystem* audio, int32_t soundOrInstance);
     void (*resumeSound)(AudioSystem* audio, int32_t soundOrInstance);
     void (*pauseAll)(AudioSystem* audio);
