@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        sanitizers: [OFF, ON]
+        sanitizers: ["OFF", "ON"]
     steps:
       - uses: actions/checkout@v4
       - name: Install test dependencies
