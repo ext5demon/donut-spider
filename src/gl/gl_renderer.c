@@ -1285,7 +1285,7 @@ static void glDrawSpriteTiled(Renderer* renderer, int32_t tpagIndex, float origi
     );
 }
 
-static void glDrawSpritePart(Renderer* renderer, int32_t tpagIndex, int32_t srcOffX, int32_t srcOffY, int32_t srcW, int32_t srcH, float x, float y, float xscale, float yscale, float angleDeg, float pivotX, float pivotY, uint32_t color, float alpha) {
+static void glDrawSpritePart(Renderer* renderer, int32_t tpagIndex, float srcOffX, float srcOffY, float srcW, float srcH, float x, float y, float xscale, float yscale, float angleDeg, float pivotX, float pivotY, uint32_t color, float alpha) {
     GLRenderer* gl = (GLRenderer*) renderer;
     DataWin* dw = renderer->dataWin;
 
@@ -2096,6 +2096,11 @@ static bool glSurfaceExists(Renderer* renderer, int32_t surfaceId) {
     return gl->surfaces[surfaceId] != 0;
 }
 
+static bool glSurfaceGetPixel(Renderer* renderer, int32_t surfaceId, int32_t x, int32_t y, uint8_t outRGBA[4]) {
+    GLRenderer* gl = (GLRenderer*) renderer;
+    return GLCommon_surfaceGetPixel(gl->surfaces, gl->surfaceWidth, gl->surfaceHeight, gl->surfaceCount, surfaceId, x, y, outRGBA);
+}
+
 static bool glSurfaceGetPixels(Renderer* renderer, int32_t surfaceId, uint8_t* outRGBA) {
     GLRenderer* gl = (GLRenderer*) renderer;
     flushBatch(gl);
@@ -2453,7 +2458,7 @@ static void glGpuSetBlendMode(Renderer* renderer, int32_t mode) {
     gl->currentDFactorAlpha = gl->currentDFactor;
 
     glBlendEquation(GLCommon_blendModeToEquation(mode));
-    glBlendFunc(gl->currentSFactor, gl->currentDFactor);
+    glBlendFunc(GLCommon_blendFactorToGL(gl->currentSFactor), GLCommon_blendFactorToGL(gl->currentDFactor));
 }
 
 static void glGpuSetBlendModeExt(Renderer* renderer, int32_t sfactor, int32_t dfactor, int32_t sfactor_alpha, int32_t dfactor_alpha) {
@@ -2465,6 +2470,7 @@ static void glGpuSetBlendModeExt(Renderer* renderer, int32_t sfactor, int32_t df
     gl->currentSFactorAlpha = sfactor_alpha;
     gl->currentDFactorAlpha = dfactor_alpha;
 
+    glBlendEquation(GL_FUNC_ADD);
     glBlendFuncSeparate(
         GLCommon_blendFactorToGL(sfactor), 
         GLCommon_blendFactorToGL(dfactor), 
@@ -2834,6 +2840,7 @@ Renderer* GLRenderer_create(void) {
     glVtable.ensureApplicationSurface = glEnsureApplicationSurface;
     glVtable.surfaceCopy = glSurfaceCopy;
     glVtable.surfaceGetPixels = glSurfaceGetPixels;
+    glVtable.surfaceGetPixel = glSurfaceGetPixel;
     glVtable.surfaceUpdatePixels = glSurfaceUpdatePixels;
     glVtable.getSurfaceWidth = glGetSurfaceWidth;
     glVtable.getSurfaceHeight = glGetSurfaceHeight;

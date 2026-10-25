@@ -38,7 +38,12 @@ void GLCommon_endLetterboxBlit(int32_t fboWidth, int32_t fboHeight, int32_t game
     int32_t sx, sy, ex, ey;
     glClearColor(0.0, 0.0, 0.0, 1.0); //please remove if it breaks something like borders, it was just my quick-fix for the color to not be randomly changed
     GLCommon_computeLetterbox(gameW, gameH, windowW, windowH, &sx, &sy, &ex, &ey);
+#ifdef PLATFORM_PS3
+    // Both RSX surfaces and the display buffer use top-down coordinates.
+    glBlitFramebuffer(0, 0, fboWidth, fboHeight, sx, sy, ex, ey, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+#else
     glBlitFramebuffer(0, 0, fboWidth, fboHeight, sx, ey, ex, sy, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+#endif
     glBindFramebuffer(GL_FRAMEBUFFER, hostFbo);
 }
 
@@ -85,6 +90,8 @@ void GLCommon_surfaceBlit(GLuint* surfaces, int32_t* surfaceWidth, int32_t* surf
         return;
 
     int originalFramebufferBinding = 0;
+    GLint originalReadBinding = 0;
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &originalReadBinding);
 
     // Yes, in OpenGL you need to use _BINDING to query things
     glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &originalFramebufferBinding);
@@ -104,7 +111,23 @@ void GLCommon_surfaceBlit(GLuint* surfaces, int32_t* surfaceWidth, int32_t* surf
     }
 
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, originalFramebufferBinding);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, originalReadBinding);
     if (scissorWasEnabled) glEnable(GL_SCISSOR_TEST);
+}
+
+bool GLCommon_surfaceGetPixel(GLuint* surfaces, int32_t* surfaceWidth, int32_t* surfaceHeight, uint32_t count, int32_t surfaceId, int32_t x, int32_t y, uint8_t outRGBA[4]) {
+    if (!outRGBA || surfaceId < 0 || (uint32_t)surfaceId >= count || !surfaces[surfaceId]) return false;
+    int32_t w = surfaceWidth[surfaceId], h = surfaceHeight[surfaceId];
+    if (x < 0 || y < 0 || x >= w || y >= h) return false;
+    GLint prevFbo = 0, prevPackAlign = 4;
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &prevFbo);
+    glGetIntegerv(GL_PACK_ALIGNMENT, &prevPackAlign);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, surfaces[surfaceId]);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadPixels(x, h - 1 - y, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, outRGBA);
+    glPixelStorei(GL_PACK_ALIGNMENT, prevPackAlign);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, (GLuint)prevFbo);
+    return true;
 }
 
 bool GLCommon_surfaceGetPixels(GLuint* surfaces, int32_t* surfaceWidth, int32_t* surfaceHeight, uint32_t count, int32_t surfaceId, uint8_t* outRGBA) {
@@ -120,11 +143,11 @@ bool GLCommon_surfaceGetPixels(GLuint* surfaces, int32_t* surfaceWidth, int32_t*
         return false;
 
     GLint prevFbo = 0;
-    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &prevFbo);
     GLint prevPackAlign = 4;
     glGetIntegerv(GL_PACK_ALIGNMENT, &prevPackAlign);
 
-    glBindFramebuffer(GL_FRAMEBUFFER, surfaces[surfaceId]);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, surfaces[surfaceId]);
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
 
     uint8_t* tmp = (uint8_t *)safeMalloc((size_t) w * (size_t) h * 4);
@@ -138,7 +161,7 @@ bool GLCommon_surfaceGetPixels(GLuint* surfaces, int32_t* surfaceWidth, int32_t*
     free(tmp);
 
     glPixelStorei(GL_PACK_ALIGNMENT, prevPackAlign);
-    glBindFramebuffer(GL_FRAMEBUFFER, (GLuint) prevFbo);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, (GLuint) prevFbo);
     return true;
 }
 
@@ -173,26 +196,26 @@ GLenum GLCommon_blendModeToEquation(int mode) {
     }
 }
 
-GLenum GLCommon_blendModeToSFactor(int mode) {
+int GLCommon_blendModeToSFactor(int mode) {
     switch (mode) {
         default:
-        case bm_normal:           return GL_SRC_ALPHA;
-        case bm_add:              return GL_SRC_ALPHA;
-        case bm_subtract:         return GL_ZERO;
-        case bm_reverse_subtract: return GL_SRC_ALPHA;
-        case bm_min:              return GL_ONE;
-        case bm_max:              return GL_SRC_ALPHA;
+        case bm_normal:           return bm_src_alpha;
+        case bm_add:              return bm_src_alpha;
+        case bm_subtract:         return bm_zero;
+        case bm_reverse_subtract: return bm_src_alpha;
+        case bm_min:              return bm_one;
+        case bm_max:              return bm_src_alpha;
     }
 }
 
-GLenum GLCommon_blendModeToDFactor(int mode) {
+int GLCommon_blendModeToDFactor(int mode) {
     switch (mode) {
         default:
-        case bm_normal:           return GL_ONE_MINUS_SRC_ALPHA;
-        case bm_add:              return GL_ONE;
-        case bm_subtract:         return GL_ONE_MINUS_SRC_COLOR;
-        case bm_reverse_subtract: return GL_ONE;
-        case bm_min:              return GL_ONE;
-        case bm_max:              return GL_ONE_MINUS_SRC_COLOR;
+        case bm_normal:           return bm_inv_src_alpha;
+        case bm_add:              return bm_one;
+        case bm_subtract:         return bm_inv_src_color;
+        case bm_reverse_subtract: return bm_one;
+        case bm_min:              return bm_one;
+        case bm_max:              return bm_inv_src_color;
     }
 }

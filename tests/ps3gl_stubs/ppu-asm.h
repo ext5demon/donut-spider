@@ -1,0 +1,1 @@
+/* Hardware intrinsics are not executed by this host test. */

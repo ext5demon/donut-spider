@@ -4,10 +4,12 @@
 #include <ps3gl.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include "data_win.h"
 
 // Loader for the PS3 TEXTURES.BIN bundle produced by the compatible preprocessor.
 
 bool PS3Textures_init(const char* texturesBinPath);
+bool PS3Textures_validate(const DataWin* dataWin);
 void PS3Textures_free();
 
 // Total number of texture pages from the TEXTURES.BIN file.
@@ -25,5 +27,7 @@ GLuint PS3Textures_getClutTexture();
 // Pre-normalized V coordinate (row center) for the CLUT belonging to a given
 // TPAG. Returns -1.0f if the TPAG is unmapped (no pixels) or out of range.
 float PS3Textures_getTpagPaletteV(int32_t tpagIndex);
+bool PS3Textures_readClut(int32_t tpagIndex, uint8_t out[1024]);
+bool PS3Textures_readTpagRGBA(const TexturePageItem* item, int32_t tpagIndex, uint8_t** out);
 
 #endif /* _BS_PS3_TEXTURES_H_ */

@@ -1,0 +1,19 @@
+// DELTARUNE's YIQ hue rotation and grayscale, on indexed or RGBA sources.
+void main(float4 color:COLOR0,float2 uv:TEXCOORD0,
+          uniform sampler2D uIndex:TEXUNIT0,uniform sampler2D uPalette:TEXUNIT1,
+          uniform float uPaletteV,uniform float4 uEffect,
+          out float4 result) {
+    float4 base=tex2D(uIndex,uv);
+    if(uEffect.x>.5)base=tex2D(uPalette,float2(base.r*(255.0/256.0)+.5/256.0,uPaletteV));
+    result=base*color;
+    if(uEffect.y<1.5) {
+        float3 yiq=float3(dot(result.rgb,float3(.299,.587,.114)),
+                          dot(result.rgb,float3(.595716,-.274453,-.321263)),
+                          dot(result.rgb,float3(.211456,-.522591,.311135)));
+        float c=cos(uEffect.z),s=sin(uEffect.z);
+        float i=yiq.y*c-yiq.z*s,q=yiq.y*s+yiq.z*c;
+        result.rgb=float3(yiq.x+.9563*i+.6210*q,yiq.x-.2721*i-.6474*q,yiq.x-1.1070*i+1.7046*q);
+    } else {
+        result=float4(dot(base.rgb,float3(.21,.71,.07)).xxx,base.a);
+    }
+}

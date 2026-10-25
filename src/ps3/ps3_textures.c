@@ -59,6 +59,7 @@ bool PS3Textures_init(const char* texturesBinPath) {
     gClutCount = readU16BE(headerBuf + 1);
     gPageCount = readU16BE(headerBuf + 3);
     gTpagCount = readU16BE(headerBuf + 5);
+    if (!gClutCount || gClutCount > 4096 || !gPageCount || !gTpagCount) goto fail;
 
     PS3SessionLog_event("PS3Textures_init: gTpagCount=%u gClutCount=%u", gTpagCount, gClutCount);
 
@@ -83,6 +84,7 @@ bool PS3Textures_init(const char* texturesBinPath) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glActiveTexture(GL_TEXTURE0);
     free(clutBuf);
+    if (!ps3glTextureReady(gClutTexture)) goto fail;
 
     // --- TPAG -> CLUT row map (small, kept resident) ---
     size_t mapBytes = (size_t) gTpagCount * 2;
@@ -95,6 +97,9 @@ bool PS3Textures_init(const char* texturesBinPath) {
         gTpagClutMap[i] = readU16BE(mapBuf + i * 2);
     }
     free(mapBuf);
+    for (uint32_t i = 0; i < gTpagCount; i++) {
+        if (gTpagClutMap[i] != 0xFFFF && gTpagClutMap[i] >= gClutCount) goto fail;
+    }
 
     // --- Page header table (small, kept resident) ---
     size_t headerBytes = (size_t) gPageCount * PAGE_HEADER_SIZE;
@@ -114,6 +119,20 @@ bool PS3Textures_init(const char* texturesBinPath) {
 
     // Pixel block starts here. Pages are streamed from disk on demand.
     gPixelBlockBase = ftell(gFp);
+    if (gPixelBlockBase < 0 || fseek(gFp, 0, SEEK_END) != 0) goto fail;
+    long fileSize = ftell(gFp);
+    if (fileSize < gPixelBlockBase) goto fail;
+    for (uint32_t i = 0; i < gPageCount; i++) {
+        const PageInfo* page = &gPageInfo[i];
+        if (page->pixelDataSize == 0) continue; // unused/empty pages are valid
+        if (!page->width || !page->height || page->width > 4096 || page->height > 4096 ||
+            (uint64_t)page->width * page->height != page->pixelDataSize ||
+            (uint64_t)page->pixelOffset + page->pixelDataSize > (uint64_t)(fileSize - gPixelBlockBase)) {
+            PS3SessionLog_event("Invalid TEXTURES.BIN page %u: %ux%u offset=%u bytes=%u", i,
+                                page->width, page->height, page->pixelOffset, page->pixelDataSize);
+            goto fail;
+        }
+    }
 
     fprintf(stderr, "PS3Textures: opened %s (clutCount=%u pages=%u tpags=%u, streaming pixels)\n", texturesBinPath, gClutCount, gPageCount, gTpagCount);
 
@@ -121,6 +140,7 @@ bool PS3Textures_init(const char* texturesBinPath) {
     return true;
 
 fail:
+    PS3SessionLog_event("TEXTURES.BIN invalid, truncated, or GPU allocation failed: %s", texturesBinPath);
     if (gFp != NULL) { fclose(gFp); gFp = NULL; }
     if (gClutTexture != 0) glDeleteTextures(1, &gClutTexture);
     free(gTpagClutMap);
@@ -157,6 +177,9 @@ uint32_t PS3Textures_getPageCount() {
 }
 
 bool PS3Textures_loadPage(uint32_t pageId, int* outW, int* outH, uint8_t** outPixels) {
+    if (!outW || !outH || !outPixels) return false;
+    *outW = *outH = 0;
+    *outPixels = NULL;
     if (!gInitialized || pageId >= gPageCount) return false;
     const PageInfo* h = &gPageInfo[pageId];
     if (h->width == 0 || h->height == 0 || h->pixelDataSize == 0) return false;
@@ -187,6 +210,27 @@ bool PS3Textures_loadPage(uint32_t pageId, int* outW, int* outH, uint8_t** outPi
     return true;
 }
 
+bool PS3Textures_validate(const DataWin* dataWin) {
+    if (!gInitialized || !dataWin || dataWin->tpag.count != gTpagCount) {
+        PS3SessionLog_event("Texture bundle mismatch: WAD TPAGs=%u bundle TPAGs=%u; rebuild TEXTURES.BIN from this data.win",
+                            dataWin ? dataWin->tpag.count : 0, gTpagCount);
+        return false;
+    }
+    for (uint32_t i = 0; i < dataWin->tpag.count; ++i) {
+        const TexturePageItem* item = &dataWin->tpag.items[i];
+        if (!item->present || item->texturePageId < 0 || !item->sourceWidth || !item->sourceHeight) continue;
+        uint32_t pageId = (uint32_t)item->texturePageId;
+        if (pageId >= gPageCount || gTpagClutMap[i] == 0xFFFF ||
+            !gPageInfo[pageId].pixelDataSize ||
+            (uint32_t)item->sourceX + item->sourceWidth > gPageInfo[pageId].width ||
+            (uint32_t)item->sourceY + item->sourceHeight > gPageInfo[pageId].height) {
+            PS3SessionLog_event("Texture bundle mismatch at TPAG=%u page=%u; rebuild bundle for this WAD", i, pageId);
+            return false;
+        }
+    }
+    return true;
+}
+
 GLuint PS3Textures_getClutTexture() {
     return gInitialized ? gClutTexture : 0;
 }
@@ -197,4 +241,31 @@ float PS3Textures_getTpagPaletteV(int32_t tpagIndex) {
     uint16_t row = gTpagClutMap[tpagIndex];
     if (row == 0xFFFF || row >= gClutCount) return -1.0f;
     return ((float) row + 0.5f) / (float) gClutCount;
+}
+
+bool PS3Textures_readClut(int32_t tpagIndex, uint8_t out[1024]) {
+    if (!out || !gInitialized || tpagIndex < 0 || (uint32_t)tpagIndex >= gTpagCount) return false;
+    uint16_t row=gTpagClutMap[tpagIndex];
+    return row < gClutCount && fseek(gFp,7L+(long)row*1024,SEEK_SET)==0 && fread(out,1,1024,gFp)==1024;
+}
+
+// Used only for the small color-table sprite requested by a GML palette shader.
+// No full-page decode/upload or GPU readback is needed to look up these colors.
+bool PS3Textures_readTpagRGBA(const TexturePageItem* item,int32_t tpagIndex,uint8_t** out) {
+    if(!out)return false;
+    *out=NULL;
+    if(!gInitialized||!item||item->texturePageId<0||(uint32_t)item->texturePageId>=gPageCount)return false;
+    const PageInfo* page=&gPageInfo[item->texturePageId];
+    size_t count=(size_t)item->sourceWidth*item->sourceHeight;
+    if(!count||count>256u*1024u||item->sourceX+item->sourceWidth>page->width||
+       item->sourceY+item->sourceHeight>page->height)return false;
+    uint8_t colors[1024];if(!PS3Textures_readClut(tpagIndex,colors))return false;
+    uint8_t* pixels=malloc(count*4);uint8_t* row=malloc(item->sourceWidth);
+    if(!pixels||!row){free(pixels);free(row);return false;}
+    for(unsigned y=0;y<item->sourceHeight;++y) {
+        long offset=gPixelBlockBase+page->pixelOffset+(long)(item->sourceY+y)*page->width+item->sourceX;
+        if(fseek(gFp,offset,SEEK_SET)!=0||fread(row,1,item->sourceWidth,gFp)!=item->sourceWidth){free(pixels);free(row);return false;}
+        for(unsigned x=0;x<item->sourceWidth;++x)memcpy(pixels+((size_t)y*item->sourceWidth+x)*4,colors+row[x]*4,4);
+    }
+    free(row);*out=pixels;return true;
 }

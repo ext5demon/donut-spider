@@ -16,4 +16,8 @@ void PS3SessionLog_heartbeat(const char* roomName, int32_t roomIndex, int32_t fr
 void PS3SessionLog_close(const char* reason);
 const char* PS3SessionLog_path(void);
 
+void PS3SessionLog_trace(const char* format, ...);
+// phase must be a static string; the watchdog only copies numeric game state.
+void PS3SessionLog_phase(const char* phase, int32_t roomIndex, int32_t frame);
+
 #endif

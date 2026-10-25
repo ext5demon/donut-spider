@@ -9,7 +9,7 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$version = 'PA_001'
+$version = 'v0.1'
 $isDev = $Variant -eq 'Dev'
 
 if ([string]::IsNullOrWhiteSpace($BuildDirectory)) {
@@ -47,15 +47,15 @@ if ($null -eq $elf) {
 }
 
 if ($isDev) {
-    $title = 'donut spider-dev'
+    $title = 'Spider Donut v0.1 Beta (diagnostics)'
     $appId = 'DONSD0001'
-    $contentId = 'UP0001-DONSD0001_00-DONUTSPIDERDEV01'
+    $contentId = 'UP0001-DONSD0001_00-SPIDERDONUTBETA1'
     $fileName = "donut-spider-dev-$version.pkg"
 } else {
-    $title = 'Donut Spider'
-    $appId = 'DONS00001'
-    $contentId = 'UP0001-DONS00001_00-DONUTSPIDERPA001'
-    $fileName = "Donut-Spider-$version.pkg"
+    $title = 'Spider Donut v0.1 Beta'
+    $appId = 'DONSD0001'
+    $contentId = 'UP0001-DONSD0001_00-SPIDERDONUTBETA1'
+    $fileName = "spider-donut-$version.pkg"
 }
 
 $stageDirectory = Join-Path $BuildDirectory "package-$($Variant.ToLowerInvariant())"
@@ -77,7 +77,7 @@ try {
     & $makeSelf $elf (Join-Path $usrDirectory 'EBOOT.BIN') $contentId
     if ($LASTEXITCODE -ne 0) { throw "make_self_npdrm failed with exit code $LASTEXITCODE" }
 
-    & $sfo --title $title --appid $appId -f (Join-Path $repoRoot 'packaging\sfo.xml') (Join-Path $stageDirectory 'PARAM.SFO')
+    & $sfo --fromxml (Join-Path $repoRoot 'packaging\v0.1.xml') (Join-Path $stageDirectory 'PARAM.SFO')
     if ($LASTEXITCODE -ne 0) { throw "sfo failed with exit code $LASTEXITCODE" }
 
     $outputPackage = Join-Path $OutputDirectory $fileName

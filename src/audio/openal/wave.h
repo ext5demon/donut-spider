@@ -67,5 +67,7 @@ typedef struct WAVFile_t {
 // Parse a PCM WAV payload into an owned sample buffer. Returns false when the
 // header or declared sample range falls outside dataSize.
 bool WAV_ParseFileData(uint8_t const* data, size_t dataSize, WAVFile* outFile);
+// Remove abrupt nonzero edges on very short mono one-shot samples.
+void WAV_declickShortSample(WAVFile* file);
 
 #endif

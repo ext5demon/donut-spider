@@ -6,6 +6,10 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <time.h>
+#include <SDL2/SDL_thread.h>
+#include <SDL2/SDL_atomic.h>
+#include <SDL2/SDL_timer.h>
+#include <SDL2/SDL_error.h>
 
 #define SESSION_LOG_PATH_MAX 1024
 
@@ -13,6 +17,46 @@ static FILE* sessionFile = NULL;
 bool gPS3SessionLog_ForceDiskFlush = false;
 static char sessionPath[SESSION_LOG_PATH_MAX] = {0};
 static time_t sessionStartedAt = 0;
+static SDL_Thread* watchdog;
+static SDL_atomic_t watchdogStop;
+static SDL_SpinLock phaseLock;
+static const char* currentPhase;
+static int32_t phaseRoom, phaseFrame;
+static Uint32 phaseTick;
+
+void PS3SessionLog_phase(const char* phase, int32_t roomIndex, int32_t frame) {
+    SDL_AtomicLock(&phaseLock);
+    currentPhase = phase;
+    phaseRoom = roomIndex;
+    phaseFrame = frame;
+    phaseTick = SDL_GetTicks();
+    SDL_AtomicUnlock(&phaseLock);
+}
+
+static int watchProgress(void* unused) {
+    (void)unused;
+    SDL_SetThreadPriority(SDL_THREAD_PRIORITY_LOW);
+    Uint32 reported = 0;
+    bool hasReported = false;
+    while (!SDL_AtomicGet(&watchdogStop)) {
+        SDL_AtomicLock(&phaseLock);
+        const char* phase = currentPhase;
+        int32_t room = phaseRoom, frame = phaseFrame;
+        Uint32 tick = phaseTick;
+        SDL_AtomicUnlock(&phaseLock);
+        Uint32 elapsed = SDL_GetTicks() - tick;
+        if (phase && elapsed >= 10000 && (!hasReported || reported != tick)) {
+            // stderr is unbuffered and shares the session path. Never touch
+            // sessionFile here: the main thread may reopen it while flushing.
+            fprintf(stderr, "RUNNER STALL: phase=%s room_index=%d frame=%d elapsed_ms=%u\n",
+                    phase, room, frame, elapsed);
+            reported = tick;
+            hasReported = true;
+        }
+        SDL_Delay(250);
+    }
+    return 0;
+}
 
 static bool appendPath(char* output, size_t outputSize, const char* directory, const char* name) {
     if (output == NULL || outputSize == 0 || directory == NULL || name == NULL) return false;
@@ -69,10 +113,18 @@ bool PS3SessionLog_open(const char* appDirectory) {
 
     setvbuf(sessionFile, NULL, _IOLBF, 0);
     fprintf(sessionFile, "Donut Spider %s (%s)\n", DONUT_SPIDER_VERSION, DONUT_SPIDER_DISPLAY_NAME);
-    fprintf(sessionFile, "Status: Pre-alpha\n");
+    fprintf(sessionFile, "Source: %s (%s)\n", SPIDER_DONUT_COMMIT_HASH, SPIDER_DONUT_COMMIT_DATE);
     fprintf(sessionFile, "Log path: %s\n", sessionPath);
     fclose(sessionFile);
     sessionFile = fopen(sessionPath, "a");
+    if (sessionFile == NULL) return false;
+    // Parser, VM, allocation and assertion failures normally go to stderr.
+    // Preserve them in the same session file, including the final abort message.
+    if (freopen(sessionPath, "a", stderr) != NULL) setvbuf(stderr, NULL, _IONBF, 0);
+    SDL_AtomicSet(&watchdogStop, 0);
+    PS3SessionLog_phase("loading", -1, 0);
+    watchdog = SDL_CreateThread(watchProgress, "runner-watch", NULL);
+    if (!watchdog) fprintf(stderr, "Watchdog unavailable: %s\n", SDL_GetError());
     printf("Session log: %s\n", sessionPath);
     return true;
 }
@@ -109,6 +161,8 @@ void PS3SessionLog_heartbeat(const char* roomName, int32_t roomIndex, int32_t fr
 }
 
 void PS3SessionLog_close(const char* reason) {
+    SDL_AtomicSet(&watchdogStop, 1);
+    if (watchdog) { SDL_WaitThread(watchdog, NULL); watchdog = NULL; }
     if (sessionFile == NULL) return;
     PS3SessionLog_event("SESSION END reason=%s", reason != NULL ? reason : "unknown");
     fclose(sessionFile);
@@ -117,4 +171,16 @@ void PS3SessionLog_close(const char* reason) {
 
 const char* PS3SessionLog_path(void) {
     return sessionPath[0] != '\0' ? sessionPath : NULL;
+}
+
+void PS3SessionLog_trace(const char* format, ...) {
+#ifdef DONUT_SPIDER_FRAME_TRACE
+    if (!sessionFile || !format) return;
+    writePrefix();
+    va_list args; va_start(args, format);
+    vfprintf(sessionFile, format, args); va_end(args);
+    fputc('\n', sessionFile);
+#else
+    (void)format;
+#endif
 }

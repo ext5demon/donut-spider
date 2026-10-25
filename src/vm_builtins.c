@@ -3784,6 +3784,10 @@ static void variableInstanceSetOn(VMContext* ctx, Instance* target, const char* 
     snprintf(additional, sizeof(additional), " (%s)", originBuiltin);
     VM_checkIfVariableShouldBeTracedAndLog(ctx, variableTraceObjectName(ctx, target), "self", name, val, true, -1, target->instanceId, additional);
 #endif
+    if (target->objectIndex == STRUCT_OBJECT_INDEX) {
+        VM_structSet(ctx, target, name, val, -1);
+        return;
+    }
     int16_t builtinId = VMBuiltins_resolveBuiltinVarId(name);
     if (builtinId != BUILTIN_VAR_UNKNOWN) {
         VMBuiltins_setVariable(ctx, target, builtinId, name, val, -1);
@@ -3802,6 +3806,8 @@ static void variableInstanceSetOn(VMContext* ctx, Instance* target, const char* 
 }
 
 static RValue variableInstanceGetOn(VMContext* ctx, Instance* target, const char* name, MAYBE_UNUSED const char* originBuiltin) {
+    if (target->objectIndex == STRUCT_OBJECT_INDEX)
+        return RValue_makeIndependent(VM_structGetVariableByVarName(ctx, target, name, -1));
     int16_t builtinId = VMBuiltins_resolveBuiltinVarId(name);
     if (builtinId != BUILTIN_VAR_UNKNOWN) {
         RValue val = VMBuiltins_getVariable(ctx, target, builtinId, name, -1);
@@ -3832,6 +3838,10 @@ static inline bool variableScopedMatches(Instance* inst, bool structOnly) {
 }
 
 static bool variableInstanceExistsOn(VMContext* ctx, Instance* target, const char* name) {
+    if (target->objectIndex == STRUCT_OBJECT_INDEX) {
+        ptrdiff_t slot = shgeti(ctx->varNameMap, (char*) name);
+        return slot >= 0 && IntRValueHashMap_contains(&target->selfVars, ctx->varNameMap[slot].value);
+    }
     if (VMBuiltins_resolveBuiltinVarId(name) != BUILTIN_VAR_UNKNOWN) return true;
     ptrdiff_t slot = shgeti(ctx->varNameMap, (char*) name);
     if (0 > slot) return false;
@@ -9855,10 +9865,10 @@ static RValue builtin_draw_sprite_part(VMContext* ctx, RValue* args, MAYBE_UNUSE
 
     int32_t spriteIndex = RValue_toInt32(args[0]);
     int32_t subimg = RValue_toInt32(args[1]);
-    int32_t left = RValue_toInt32(args[2]);
-    int32_t top = RValue_toInt32(args[3]);
-    int32_t width = RValue_toInt32(args[4]);
-    int32_t height = RValue_toInt32(args[5]);
+    float left = (float) RValue_toReal(args[2]);
+    float top = (float) RValue_toReal(args[3]);
+    float width = (float) RValue_toReal(args[4]);
+    float height = (float) RValue_toReal(args[5]);
     float x = (float) RValue_toReal(args[6]);
     float y = (float) RValue_toReal(args[7]);
 
@@ -9877,10 +9887,10 @@ static RValue builtin_draw_sprite_part_ext(VMContext* ctx, RValue* args, MAYBE_U
 
     int32_t spriteIndex = RValue_toInt32(args[0]);
     int32_t subimg = RValue_toInt32(args[1]);
-    int32_t left = RValue_toInt32(args[2]);
-    int32_t top = RValue_toInt32(args[3]);
-    int32_t width = RValue_toInt32(args[4]);
-    int32_t height = RValue_toInt32(args[5]);
+    float left = (float) RValue_toReal(args[2]);
+    float top = (float) RValue_toReal(args[3]);
+    float width = (float) RValue_toReal(args[4]);
+    float height = (float) RValue_toReal(args[5]);
     float x = (float) RValue_toReal(args[6]);
     float y = (float) RValue_toReal(args[7]);
     float xscale = (float) RValue_toReal(args[8]);
@@ -9903,10 +9913,10 @@ static RValue builtin_draw_sprite_general(VMContext* ctx, RValue* args, MAYBE_UN
 
     int32_t spriteIndex = RValue_toInt32(args[0]);
     int32_t subimg = RValue_toInt32(args[1]);
-    int32_t left = RValue_toInt32(args[2]);
-    int32_t top = RValue_toInt32(args[3]);
-    int32_t width = RValue_toInt32(args[4]);
-    int32_t height = RValue_toInt32(args[5]);
+    float left = (float) RValue_toReal(args[2]);
+    float top = (float) RValue_toReal(args[3]);
+    float width = (float) RValue_toReal(args[4]);
+    float height = (float) RValue_toReal(args[5]);
     float x = (float) RValue_toReal(args[6]);
     float y = (float) RValue_toReal(args[7]);
     float xscale = (float) RValue_toReal(args[8]);
@@ -9958,11 +9968,8 @@ static RValue builtin_draw_rectangle(VMContext* ctx, RValue* args, MAYBE_UNUSED 
     float x2 = (float) RValue_toReal(args[2]);
     float y2 = (float) RValue_toReal(args[3]);
     bool outline = RValue_toBool(args[4]);
-    if (runner->applyOffsetForPrimitives) {
-        x2 += 1.0f; y2 += 1.0f;
-        if (x2 == floorf(x2)) x2 += 0.01f;
-        if (y2 == floorf(x2)) y2 += 0.01f;
-    }
+    // Rectangle renderers already include the final pixel. Expanding these
+    // coordinates again spills one pixel outside sprite-framed UI bars.
     runner->renderer->vtable->drawRectangle(runner->renderer, x1, y1, x2, y2, runner->renderer->drawColor, runner->renderer->drawAlpha, outline);
     return RValue_makeUndefined();
 }
@@ -9980,11 +9987,7 @@ static RValue builtin_draw_rectangle_color(VMContext* ctx, RValue* args, MAYBE_U
     uint32_t color3 = (uint32_t) RValue_toInt32(args[6]);
     uint32_t color4 = (uint32_t) RValue_toInt32(args[7]);
     bool outline = RValue_toBool(args[8]);
-    if (runner->applyOffsetForPrimitives) {
-        x2 += 1.0f; y2 += 1.0f;
-        if (x2 == floorf(x2)) x2 += 0.01f;
-        if (y2 == floorf(x2)) y2 += 0.01f;
-    }
+    // Match draw_rectangle: the backend applies inclusive endpoint coverage.
     runner->renderer->vtable->drawRectangleColor(runner->renderer, x1, y1, x2, y2, color1, color2, color3, color4, runner->renderer->drawAlpha, outline);
     return RValue_makeUndefined();
 }
@@ -10327,10 +10330,10 @@ static RValue builtin_draw_background_part(VMContext* ctx, RValue* args, MAYBE_U
     if (runner->renderer == nullptr || 7 > argCount) return RValue_makeUndefined();
 
     int32_t bgIndex = RValue_toInt32(args[0]);
-    int32_t left = RValue_toInt32(args[1]);
-    int32_t top = RValue_toInt32(args[2]);
-    int32_t width = RValue_toInt32(args[3]);
-    int32_t height = RValue_toInt32(args[4]);
+    float left = (float) RValue_toReal(args[1]);
+    float top = (float) RValue_toReal(args[2]);
+    float width = (float) RValue_toReal(args[3]);
+    float height = (float) RValue_toReal(args[4]);
     float x = (float) RValue_toReal(args[5]);
     float y = (float) RValue_toReal(args[6]);
 
@@ -10346,10 +10349,10 @@ static RValue builtin_draw_background_part_ext(VMContext* ctx, RValue* args, MAY
     if (runner->renderer == nullptr || 11 > argCount) return RValue_makeUndefined();
 
     int32_t bgIndex = RValue_toInt32(args[0]);
-    int32_t left = RValue_toInt32(args[1]);
-    int32_t top = RValue_toInt32(args[2]);
-    int32_t width = RValue_toInt32(args[3]);
-    int32_t height = RValue_toInt32(args[4]);
+    float left = (float) RValue_toReal(args[1]);
+    float top = (float) RValue_toReal(args[2]);
+    float width = (float) RValue_toReal(args[3]);
+    float height = (float) RValue_toReal(args[4]);
     float x = (float) RValue_toReal(args[5]);
     float y = (float) RValue_toReal(args[6]);
     float xscale = (float) RValue_toReal(args[7]);
@@ -10497,6 +10500,30 @@ static RValue builtin_draw_line_width_colour(VMContext* ctx, RValue* args, MAYBE
         }
         runner->renderer->vtable->drawLineColor(runner->renderer, x1, y1, x2, y2, w, col1, col2, runner->renderer->drawAlpha);
     }
+    return RValue_makeUndefined();
+}
+
+// draw_arrow(x1, y1, x2, y2, size)
+static RValue builtin_draw_arrow(VMContext* ctx, RValue* args, MAYBE_UNUSED int32_t argCount) {
+    Runner* runner = ctx->runner;
+    Renderer* renderer = runner->renderer;
+    if (renderer == nullptr) return RValue_makeUndefined();
+    float x1 = RValue_toReal(args[0]), y1 = RValue_toReal(args[1]);
+    float x2 = RValue_toReal(args[2]), y2 = RValue_toReal(args[3]);
+    float size = RValue_toReal(args[4]);
+    float dx = x2-x1, dy = y2-y1;
+    float length = sqrtf(dx*dx + dy*dy);
+    if (!(length > 0)) return RValue_makeUndefined();
+    float scale = fminf(size, length) / length;
+    dx *= scale; dy *= scale;
+    if (runner->applyOffsetForPrimitives) {
+        x1 += 1; y1 += 1; x2 += 1; y2 += 1;
+    }
+    uint32_t color = renderer->drawColor;
+    renderer->vtable->drawLine(renderer,x1,y1,x2,y2,1,color,renderer->drawAlpha);
+    renderer->vtable->drawTriangle(renderer,
+        x2-dx-dy/3,y2-dy+dx/3, x2,y2, x2-dx+dy/3,y2-dy-dx/3,
+        color,color,color,renderer->drawAlpha,false);
     return RValue_makeUndefined();
 }
 
@@ -11121,6 +11148,42 @@ static RValue builtin_draw_surface_tiled_ext(VMContext* ctx, RValue* args, MAYBE
         runner->renderer->vtable->drawSurfaceTiled(runner->renderer, surfaceId, x, y, xscale, yscale, roomW, roomH, color, alpha);
     }
     return RValue_makeUndefined();
+}
+
+static RValue surfaceGetPixel(VMContext* ctx, RValue* args, int32_t argCount, bool includeAlpha) {
+    if (argCount < 3) return RValue_makeInt32(0);
+    Runner* runner = ctx->runner;
+    Renderer* renderer = runner ? runner->renderer : nullptr;
+    if (!renderer) return RValue_makeInt32(0);
+    int32_t id = RValue_toInt32(args[0]);
+    int32_t x = RValue_toInt32(args[1]), y = RValue_toInt32(args[2]);
+    uint8_t rgba[4] = {0};
+    if (renderer->vtable->surfaceGetPixel) {
+        if (!renderer->vtable->surfaceGetPixel(renderer, id, x, y, rgba)) return RValue_makeInt32(0);
+    } else {
+        // Other renderers can use their existing whole-surface readback.
+        int32_t w = Renderer_getSurfaceWidth(renderer, id), h = Renderer_getSurfaceHeight(renderer, id);
+        if (!renderer->vtable->surfaceGetPixels || x < 0 || y < 0 || x >= w || y >= h ||
+            (size_t)w > SIZE_MAX / 4 / (size_t)h) return RValue_makeInt32(0);
+        uint8_t* pixels = safeMalloc((size_t)w * h * 4);
+        bool ok = renderer->vtable->surfaceGetPixels(renderer, id, pixels);
+        if (ok) memcpy(rgba, pixels + ((size_t)y * w + x) * 4, 4);
+        free(pixels);
+        if (!ok) return RValue_makeInt32(0);
+    }
+    // Assemble ABGR explicitly: the PS3 host is big endian. Keep all 32 bits,
+    // including opaque alpha, even on builds configured with 32-bit GML reals.
+    uint32_t color = (uint32_t)rgba[0] | (uint32_t)rgba[1] << 8 | (uint32_t)rgba[2] << 16;
+    if (includeAlpha) color |= (uint32_t)rgba[3] << 24;
+    return RValue_makeInt64((int64_t)color);
+}
+
+static RValue builtin_surface_getpixel(VMContext* ctx, RValue* args, int32_t argCount) {
+    return surfaceGetPixel(ctx, args, argCount, false);
+}
+
+static RValue builtin_surface_getpixel_ext(VMContext* ctx, RValue* args, int32_t argCount) {
+    return surfaceGetPixel(ctx, args, argCount, true);
 }
 
 static RValue builtin_surface_get_width(VMContext* ctx, RValue* args, MAYBE_UNUSED int32_t argCount) {
@@ -14672,6 +14735,28 @@ static GamePath* getPath(Runner* runner, int32_t pathIdx) {
     return &runner->dataWin->path.paths[pathIdx];
 }
 
+static RValue builtin_draw_path(VMContext* ctx, RValue* args, int32_t argCount) {
+    if (argCount < 4) return RValue_makeUndefined();
+    Runner* runner = ctx->runner;
+    if (!runner || !runner->renderer || !runner->renderer->vtable->drawLine) return RValue_makeUndefined();
+    GamePath* path = getPath(runner, RValue_toInt32(args[0]));
+    if (!path || path->internalPointCount < 2) return RValue_makeUndefined();
+    bool absolute = RValue_toBool(args[3]);
+    float x = absolute ? 0 : (float)RValue_toReal(args[1]) - path->internalPoints[0].x;
+    float y = absolute ? 0 : (float)RValue_toReal(args[2]) - path->internalPoints[0].y;
+    if (runner->applyOffsetForPrimitives) { x += 1; y += 1; }
+    // Use the same computed curve/closed path as movement; no per-draw allocation
+    // or repeated scan from the beginning of the path for every line segment.
+    Renderer* renderer = runner->renderer;
+    for (uint32_t i = 1; i < path->internalPointCount; ++i) {
+        InternalPathPoint* a = &path->internalPoints[i - 1];
+        InternalPathPoint* b = &path->internalPoints[i];
+        renderer->vtable->drawLine(renderer, x + a->x, y + a->y, x + b->x, y + b->y,
+                                  1, renderer->drawColor, renderer->drawAlpha);
+    }
+    return RValue_makeUndefined();
+}
+
 // path_add() - create a new empty path, return its index
 static RValue builtin_path_add(VMContext* ctx, MAYBE_UNUSED RValue* args, MAYBE_UNUSED int32_t argCount) {
     Runner* runner = ctx->runner;
@@ -15994,6 +16079,8 @@ static RValue fontAddSpriteImpl(VMContext* ctx, int32_t spriteIndex, uint16_t* c
     dw->font.fonts = (Font *)safeRealloc(dw->font.fonts, dw->font.count * sizeof(Font));
 
     Font* font = &dw->font.fonts[newFontIndex];
+    memset(font, 0, sizeof(*font));
+    font->present = true;
     font->name = "sprite_font";
     font->displayName = "sprite_font";
     font->emSize = (maxHeight > 0) ? maxHeight : sprite->height;
@@ -16041,7 +16128,7 @@ static RValue builtin_font_get_info(VMContext* ctx, RValue* args, int32_t argCou
 
     Instance* ret = Runner_createStruct(ctx->runner);
     VM_structSetAndFreeVal(ctx, ret, "spriteIndex", RValue_makeInt32(font->isSpriteFont ? font->spriteIndex : -1), -1);
-    VM_structSetAndFreeVal(ctx, ret, "size", RValue_makeInt32((int32_t) font->emSize), -1);
+    VM_structSetAndFreeVal(ctx, ret, "size", RValue_makeReal(font->emSize), -1);
     VM_structSetAndFreeVal(ctx, ret, "ascender", RValue_makeInt32((int32_t) font->ascender), -1);
     VM_structSetAndFreeVal(ctx, ret, "ascenderOffset", RValue_makeInt32(font->ascenderOffset), -1);
     VM_structSetAndFreeVal(ctx, ret, "sdfSpread", RValue_makeInt32((int32_t) font->sdfSpread), -1);
@@ -17251,6 +17338,7 @@ void VMBuiltins_registerAll(VMContext* ctx) {
     }
     VM_registerBuiltin(ctx, "draw_self", builtin_draw_self);
     VM_registerBuiltin(ctx, "draw_line", builtin_draw_line);
+    VM_registerBuiltin(ctx, "draw_arrow", builtin_draw_arrow);
     VM_registerBuiltin(ctx, "draw_line_colour", builtin_draw_line_colour);
     VM_registerBuiltin(ctx, "draw_line_color", builtin_draw_line_colour); // alt-spelling (used in Undertale)
     VM_registerBuiltin(ctx, "draw_line_width", builtin_draw_line_width);
@@ -17291,6 +17379,9 @@ void VMBuiltins_registerAll(VMContext* ctx) {
     VM_registerBuiltin(ctx, "surface_get_target", builtin_surface_get_target);
     VM_registerBuiltin(ctx, "surface_exists", builtin_surface_exists);
     VM_registerBuiltin(ctx, "surface_get_width", builtin_surface_get_width);
+    VM_registerBuiltin(ctx, "surface_getpixel", builtin_surface_getpixel);
+    VM_registerBuiltin(ctx, "surface_getpixel_ext", builtin_surface_getpixel_ext);
+    VM_registerBuiltin(ctx, "draw_path", builtin_draw_path);
     VM_registerBuiltin(ctx, "surface_get_height", builtin_surface_get_height);
     VM_registerBuiltin(ctx, "surface_get_texture", builtin_surface_get_texture);
     VM_registerBuiltin(ctx, "surface_resize", builtin_surface_resize);

@@ -26,6 +26,9 @@ extern u32 depth_offset;
 void setRenderTarget(u32 index);
 void waitflip();
 void waitFinish(void);
+// Synchronous VRAM -> mapped main-memory DMA. Data stays valid until next call.
+#define PS3GL_READBACK_CAPACITY (1024u * 1024u)
+const unsigned char* rsxReadbackTransfer(u32 source, u32 pitch, u32 rowBytes, u32 rows);
 
 void init_screen(void *host_addr,u32 size);
 void flip();

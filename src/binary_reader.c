@@ -12,6 +12,15 @@ BinaryReader BinaryReader_create(FILE* file, size_t fileSize) {
     return br;
 }
 
+void BinaryReader_setFileCache(BinaryReader* reader, uint8_t* cache, size_t capacity) {
+    require(cache != nullptr && capacity > 0 && reader->buffer == nullptr);
+    reader->fileCachePosition = BinaryReader_getPosition(reader);
+    reader->fileCache = cache;
+    reader->fileCacheCapacity = capacity;
+    reader->fileCacheLength = 0;
+    reader->fileCacheFills = reader->fileCacheBytesRead = 0;
+}
+
 void BinaryReader_setBuffer(BinaryReader* reader, uint8_t* buffer, size_t baseOffset, size_t size) {
     reader->buffer = buffer;
     reader->bufferBase = baseOffset;
@@ -38,6 +47,29 @@ static void readCheck(BinaryReader* reader, void* dest, size_t bytes) {
         return;
     }
 
+    if (reader->fileCache != nullptr) {
+        require(reader->fileCachePosition <= reader->fileSize && bytes <= reader->fileSize-reader->fileCachePosition);
+        uint8_t* output = dest;
+        while (bytes > 0) {
+            size_t position = reader->fileCachePosition;
+            if (position < reader->fileCacheBase || position-reader->fileCacheBase >= reader->fileCacheLength) {
+                size_t count = reader->fileSize-position;
+                if (count > reader->fileCacheCapacity) count = reader->fileCacheCapacity;
+                require(fseek(reader->file, (long)position, SEEK_SET) == 0);
+                require(fread(reader->fileCache, 1, count, reader->file) == count);
+                reader->fileCacheBase = position;
+                reader->fileCacheLength = count;
+                ++reader->fileCacheFills;
+                reader->fileCacheBytesRead += count;
+            }
+            size_t offset = position-reader->fileCacheBase;
+            size_t count = reader->fileCacheLength-offset;
+            if (count > bytes) count = bytes;
+            memcpy(output, reader->fileCache+offset, count);
+            output += count; bytes -= count; reader->fileCachePosition += count;
+        }
+        return;
+    }
     size_t read = fread(dest, 1, bytes, reader->file);
     if (read != bytes) {
         long pos = ftell(reader->file) - (long) read;
@@ -119,6 +151,13 @@ uint8_t* BinaryReader_readBytesAt(BinaryReader* reader, size_t offset, size_t co
         return buf;
     }
 
+    if (reader->fileCache != nullptr) {
+        size_t savedPos = reader->fileCachePosition;
+        BinaryReader_seek(reader, offset);
+        readCheck(reader, buf, count);
+        reader->fileCachePosition = savedPos;
+        return buf;
+    }
     long savedPos = ftell(reader->file);
     fseek(reader->file, (long) offset, SEEK_SET);
     readCheck(reader, buf, count);
@@ -129,6 +168,11 @@ uint8_t* BinaryReader_readBytesAt(BinaryReader* reader, size_t offset, size_t co
 void BinaryReader_skip(BinaryReader* reader, size_t bytes) {
     if (reader->buffer != nullptr) {
         reader->bufferPos += bytes;
+        return;
+    }
+    if (reader->fileCache != nullptr) {
+        require(reader->fileCachePosition <= reader->fileSize && bytes <= reader->fileSize-reader->fileCachePosition);
+        reader->fileCachePosition += bytes;
         return;
     }
     fseek(reader->file, (long) bytes, SEEK_CUR);
@@ -148,6 +192,10 @@ void BinaryReader_seek(BinaryReader* reader, size_t position) {
         fprintf(stderr, "BinaryReader: seek to 0x%zX out of bounds (file size 0x%zX)\n", position, reader->fileSize);
         abort();
     }
+    if (reader->fileCache != nullptr) {
+        reader->fileCachePosition = position;
+        return;
+    }
     fseek(reader->file, (long) position, SEEK_SET);
 }
 
@@ -155,5 +203,6 @@ size_t BinaryReader_getPosition(BinaryReader* reader) {
     if (reader->buffer != nullptr) {
         return reader->bufferBase + reader->bufferPos;
     }
+    if (reader->fileCache != nullptr) return reader->fileCachePosition;
     return (size_t) ftell(reader->file);
 }

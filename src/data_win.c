@@ -1,6 +1,7 @@
 #include "data_win.h"
 #include "binary_reader.h"
 #include "binary_utils.h"
+#include "asset_offset_index.h"
 
 #include <stdbool.h>
 #include <stdio.h>
@@ -884,25 +885,16 @@ static void parseSPRT(BinaryReader* reader, DataWin* dw, bool skipLoadingPrecise
                 spr->masks = (uint8_t **)safeMalloc(maskDataCount * sizeof(uint8_t*));
                 if (dw->mappedFile) {
                     uint8_t* block = dw->mappedFile + BinaryReader_getPosition(reader);
-#if defined(IS_BIG_ENDIAN)
-                    uint8_t* swappedBlock = (uint8_t *)safeMalloc(paddedMaskBytes);
-                    memcpy(swappedBlock, block, paddedMaskBytes);
-                    BinaryUtils_bswap32_SIMD((uint32_t*)swappedBlock, paddedMaskBytes / 4);
-                    repeat(maskDataCount, j) {
-                        spr->masks[j] = swappedBlock + j * bytesPerMask;
-                    }
-#else
+                    // Masks are MSB-first bit arrays, consumed one byte at a time.
+                    // They have no CPU byte order; swapping 32-bit groups moves
+                    // collision pixels between columns, rows and even frames.
                     repeat(maskDataCount, j) {
                         spr->masks[j] = block + j * bytesPerMask;
                     }
-#endif
                     BinaryReader_skip(reader, paddedMaskBytes);
                 } else {
                     uint8_t* block = (uint8_t *)safeMalloc(paddedMaskBytes);
                     BinaryReader_readBytes(reader, block, paddedMaskBytes);
-#if defined(IS_BIG_ENDIAN)
-                    BinaryUtils_bswap32_SIMD((uint32_t*)block, paddedMaskBytes / 4);
-#endif
                     repeat(maskDataCount, j) {
                         spr->masks[j] = (uint8_t *)safeMalloc(bytesPerMask);
                         memcpy(spr->masks[j], block + j * bytesPerMask, bytesPerMask);
@@ -1315,7 +1307,11 @@ static void parseFONT(BinaryReader* reader, DataWin* dw) {
         font->present = true;
         font->name = readStringPtr(reader, dw);
         font->displayName = readStringPtr(reader, dw);
-        font->emSize = BinaryReader_readUint32(reader);
+        uint32_t emBits = BinaryReader_readUint32(reader);
+        if (emBits & 0x80000000u) {
+            float negativeSize;memcpy(&negativeSize,&emBits,sizeof(negativeSize));
+            font->emSize = -negativeSize;
+        } else font->emSize = (float)emBits;
         font->bold = BinaryReader_readBool32(reader);
         font->italic = BinaryReader_readBool32(reader);
         font->rangeStart = BinaryReader_readUint16(reader);
@@ -2164,31 +2160,20 @@ static int32_t parseTexturePageItem(BinaryReader* reader, DataWin* dw, int32_t i
 }
 
 // Sprite/Background/Font initially store an absolute file offset to their TexturePageItem (since SPRT/BGND/FONT are parsed before TPAG).
-// resolveAllTPAGReferences translates those offsets to TPAG indices once the table is known. ptrs[] is the TPAG pointer table in monotonically increasing file order, so we can binary search it.
+// resolveAllTPAGReferences translates those offsets to TPAG indices once the table is known. ptrs[] is an auxiliary sorted offset-to-original-index table; TPAG IDs retain WAD order.
 // Offsets that don't resolve (or are 0) become -1.
-static int32_t findTPAGIndexByOffset(BinaryReader* reader, DataWin* dw, uint32_t* ptrs, uint32_t count, uint32_t offset) {
+static int32_t findTPAGIndexByOffset(BinaryReader* reader, DataWin* dw, const AssetOffsetIndex* ptrs, uint32_t count, uint32_t offset) {
     if (offset == 0)
         return -1;
 
-    uint32_t lo = 0, hi = count;
-    while (hi > lo) {
-        uint32_t mid = (lo + hi) >> 1;
-        uint32_t v = ptrs[mid];
-
-        if (v == offset)
-            return (int32_t) mid;
-
-        if (offset > v)
-            lo = mid + 1;
-        else
-            hi = mid;
-    }
+    int32_t found = AssetOffsetIndex_find(ptrs, count, offset);
+    if (found >= 0) return found;
 
     // This is stupidly annoying
     // WinPack (used by TranslaTale) stores TPAGs OUTSIDE of the IFF chunk and those entries are NOT present in the TPAG list
     // So we need to manually read it
     // The offset is an absolute position
-    if (reader->fileSize > offset) {
+    if (offset <= reader->fileSize && reader->fileSize - offset >= 22) {
         BinaryReader_seek(reader, offset);
 
         return parseTexturePageItem(reader, dw, -1);
@@ -2197,7 +2182,7 @@ static int32_t findTPAGIndexByOffset(BinaryReader* reader, DataWin* dw, uint32_t
     return -1;
 }
 
-static void resolveAllTPAGReferences(BinaryReader* reader, DataWin* dw, uint32_t* ptrs, uint32_t count) {
+static void resolveAllTPAGReferences(BinaryReader* reader, DataWin* dw, const AssetOffsetIndex* ptrs, uint32_t count) {
     repeat(dw->sprt.count, i) {
         Sprite* spr = &dw->sprt.sprites[i];
         repeat(spr->textureCount, j) {
@@ -2230,7 +2215,14 @@ static void parseTPAG(BinaryReader* reader, DataWin* dw) {
         parseTexturePageItem(reader, dw, i);
     }
 
-    resolveAllTPAGReferences(reader, dw, ptrs, count);
+    // WAD pointer-table order defines TPAG/palette identity, not file order.
+    // Sort an auxiliary index so non-monotonic pointers never become bogus
+    // WinPack entries with an off-by-one texture page.
+    AssetOffsetIndex* lookup = (AssetOffsetIndex*)safeMalloc(count * sizeof(*lookup));
+    repeat(count, i) { lookup[i].offset = ptrs[i]; lookup[i].index = i; }
+    qsort(lookup, count, sizeof(*lookup), AssetOffsetIndex_compare);
+    resolveAllTPAGReferences(reader, dw, lookup, count);
+    free(lookup);
 
     free(ptrs);
 }
@@ -3211,7 +3203,14 @@ void DataWin_loadRoomPayload(DataWin* dw, int32_t roomIndex) {
 
     FILE* f = dw->lazyLoadFile;
     BinaryReader lazyReader = BinaryReader_create(f, dw->fileSize);
+    // Room pointer tables jump among thousands of tiny records. A FILE seek
+    // per field/table entry is particularly slow on PS3 USB storage. Keep one
+    // bounded window for this load, with transparent refills for distant data.
+    uint8_t* window = safeMalloc(64u * 1024u);
+    BinaryReader_setFileCache(&lazyReader, window, 64u * 1024u);
     readRoomPayload(&lazyReader, dw, room);
+    fprintf(stderr, "Room payload loaded: %s reads=%zu bytes=%zu\n",room->name,lazyReader.fileCacheFills,lazyReader.fileCacheBytesRead);
+    free(window);
 }
 
 // ===[ Dynamic Sprite Slot Allocation ]===

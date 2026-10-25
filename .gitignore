@@ -97,3 +97,16 @@ secrets.json
 
 # Generated compatibility config
 compat/config.mk
+
+# Private workspace data; never part of a release
+/work/
+/outputs/
+/tmp/
+/.codex/
+textures.bin
+game.win
+game.unx
+*.pkg.sha256
+*gofile*private*.json
+id_rsa*
+id_ed25519*

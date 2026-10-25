@@ -406,7 +406,7 @@ typedef struct {
     bool present;
     const char* name;
     const char* displayName;
-    uint32_t emSize;
+    float emSize; // Newer WADs encode a negative IEEE float to distinguish it from old integer sizes.
     bool bold;
     bool italic;
     uint16_t rangeStart;

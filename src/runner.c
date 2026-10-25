@@ -1161,17 +1161,10 @@ static void applyFreeCamera(Runner* runner, int32_t* viewX, int32_t* viewY, int3
 }
 
 void Runner_drawViews(Runner* runner, int32_t gameW, int32_t gameH, bool debugShowCollisionMasks) {
-    extern bool gPS3GL_DebugLogEnabled;
-    if (runner->frameCount == 1) {
-        gPS3GL_DebugLogEnabled = true;
-    }
     
     Renderer* renderer = runner->renderer;
-    
-    PS3SessionLog_event("DRAW_VIEWS: clearScreen START");
+
     renderer->vtable->clearScreen(renderer, runner->drawBackgroundColor ? runner->backgroundColor : 0, 1.0f);
-    glFinish();
-    PS3SessionLog_event("DRAW_VIEWS: clearScreen END");
 
     bool anyViewRendered = false;
     bool viewsEnabled = runner->viewsEnabled;
@@ -1187,7 +1180,6 @@ void Runner_drawViews(Runner* runner, int32_t gameW, int32_t gameH, bool debugSh
             if (camera == nullptr) continue;
 
             bool toSurface = view->surfaceId != -1;
-            PS3SessionLog_event("DRAW_VIEWS: view %d START (toSurface=%d)", vi, toSurface);
 
             if (toSurface) {
                 if (!renderer->vtable->surfaceExists(renderer, view->surfaceId)) continue;
@@ -1197,11 +1189,8 @@ void Runner_drawViews(Runner* runner, int32_t gameW, int32_t gameH, bool debugSh
                 runner->viewCurrent = (int32_t) vi;
                 runner->renderer->cameraCurrent = runner->views[runner->viewCurrent].cameraId;
                 runner->renderer->vtable->applyProjection(runner->renderer, &camera->viewMatrix, &camera->projectionMatrix);
-                
-                PS3SessionLog_event("DRAW_VIEWS: view %d DRAW START", vi);
+
                 Runner_draw(runner);
-                glFinish();
-                PS3SessionLog_event("DRAW_VIEWS: view %d DRAW END", vi);
 
                 renderer->vtable->flush(renderer);
                 Runner_surfaceResetTarget(runner);
@@ -1221,16 +1210,10 @@ void Runner_drawViews(Runner* runner, int32_t gameW, int32_t gameH, bool debugSh
 
             runner->viewCurrent = (int32_t) vi;
             runner->renderer->cameraCurrent = runner->views[runner->viewCurrent].cameraId;
-            
-            PS3SessionLog_event("DRAW_VIEWS: view %d beginView START", vi);
-            renderer->vtable->beginView(renderer, viewX, viewY, viewW, viewH, portX, portY, portW, portH, viewAngle);
-            glFinish();
-            PS3SessionLog_event("DRAW_VIEWS: view %d beginView END", vi);
 
-            PS3SessionLog_event("DRAW_VIEWS: view %d Runner_draw START", vi);
+            renderer->vtable->beginView(renderer, viewX, viewY, viewW, viewH, portX, portY, portW, portH, viewAngle);
+
             Runner_draw(runner);
-            glFinish();
-            PS3SessionLog_event("DRAW_VIEWS: view %d Runner_draw END", vi);
 
             if (debugShowCollisionMasks) DebugOverlay_drawCollisionMasks(runner);
 
@@ -2629,6 +2612,26 @@ static FlattenedCollisionEvent* findSymmetricCollisionEvent(Runner* runner, Inst
     return nullptr;
 }
 
+static int32_t mostSpecificCollisionTarget(Runner* runner, Instance* self, Instance* other) {
+    DataWin* dataWin = runner->dataWin;
+    FlattenedCollisionEventList* list = &runner->flattenedCollisionEvents[self->objectIndex];
+    int32_t partnerObj = other->objectIndex;
+    int32_t depth = 0;
+    while (partnerObj >= 0 && dataWin->objt.count > (uint32_t) partnerObj && 32 > depth) {
+        repeat(list->eventCount, e) {
+            FlattenedCollisionEvent* evt = &list->events[e];
+            if ((int32_t) evt->targetObjectIndex == partnerObj) {
+                if (0 > evt->codeId)
+                    return -1;
+                return partnerObj;
+            }
+        }
+        partnerObj = dataWin->objt.objects[partnerObj].parentId;
+        depth++;
+    }
+    return -1;
+}
+
 static void executeCollisionEvent(Runner* runner, Instance* self, Instance* other, int32_t targetObjectIndex, int32_t codeId, int32_t ownerObjectIndex) {
     if (isEventBlockedByPendingRoom(runner, self, EVENT_COLLISION))
         return;
@@ -3109,6 +3112,9 @@ static void dispatchCollisionEvents(Runner* runner) {
                     Instance* other = runner->instanceSnapshots[snapIdx];
                     if (!other->active) continue;
                     if (other == self) continue;
+
+                    if (mostSpecificCollisionTarget(runner, self, other) != targetObjIndex)
+                        continue;
 
                     // Compute bboxes
                     if (selfDirty) {
@@ -4036,9 +4042,10 @@ bool Runner_surfaceSetTarget(Runner* runner, int32_t surfaceID) {
     int32_t slot = findFreeStackSlot(runner);
     if (slot == -1) return false;
 
-    runner->surfaceStack[slot] = surfaceID;
     runner->renderer->vtable->flush(runner->renderer);
-    return runner->renderer->vtable->setRenderTarget(runner->renderer, surfaceID, false);
+    if (!runner->renderer->vtable->setRenderTarget(runner->renderer, surfaceID, false)) return false;
+    runner->surfaceStack[slot] = surfaceID;
+    return true;
 }
 
 bool Runner_surfaceResetTarget(Runner* runner) {

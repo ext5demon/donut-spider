@@ -22,12 +22,15 @@
 #endif
 
 #include "rsxutil.h"
+#include "readback_transfer.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 extern void PS3SessionLog_event(const char* format, ...);
 extern void PS3SessionLog_flushToDisk(void);
+extern void PS3SessionLog_trace(const char* format, ...);
+extern void ps3glLogGpuState(void);
 #ifdef __cplusplus
 }
 #endif
@@ -37,7 +40,7 @@ extern void PS3SessionLog_flushToDisk(void);
 videoOutResolution res;
 gcmContextData *context = NULL;
 u32 *initialCommandBuffer;
-u32 commandBufferSize;
+u32 *initialCommandBufferEnd;
 
 u32 curr_fb = 0;
 u32 first_fb = 1;
@@ -55,14 +58,69 @@ u32 *color_buffer[2];
 
 static u32 sLabelVal = 1;
 
+static void readbackCacheBarrier(void* address,u32 bytes) {
+    // Scratch is 1MiB aligned, CPU-owned, and read-only between transfers.
+    // Flush/invalidate complete 128-byte PPU cache lines before DMA and before
+    // reading its result. No unrelated allocation shares these cache lines.
+    for(u32 offset=0;offset<bytes;offset+=128) {
+        void* line=(unsigned char*)address+offset;
+        __asm__ volatile("dcbf 0,%0" : : "r"(line) : "memory");
+    }
+    __sync_synchronize();
+}
+
+const unsigned char* rsxReadbackTransfer(u32 source, u32 pitch, u32 rowBytes, u32 rows)
+{
+    static void* scratch;
+    static u32 scratchOffset, reference = 0x70000000;
+    if (!rowBytes || !rows || (uint64_t)rowBytes * rows > PS3GL_READBACK_CAPACITY) return NULL;
+    if (!scratch) {
+        scratch = memalign(1024*1024, PS3GL_READBACK_CAPACITY);
+        if (!scratch) return NULL;
+        if (gcmMapMainMemory(scratch, PS3GL_READBACK_CAPACITY, &scratchOffset) != 0) {
+            free(scratch); scratch = NULL; return NULL;
+        }
+    }
+    // Finish rendering before the copy engine reads the render target.
+    waitFinish();
+    readbackCacheBarrier(scratch,rowBytes*rows);
+    if (!ps3glSubmitReadback(context, scratchOffset, source, pitch, rowBytes, rows)) return NULL;
+    // A command reference drains preceding transfers. A render-backend label
+    // alone is insufficient to describe completion of the separate copy engine.
+    u32 expected = ++reference;
+    rsxSetReferenceCommand(context, expected);
+    rsxFlushBuffer(context);
+    gcmControlRegister volatile* control = gcmGetControlRegister();
+    u32 timeout=0;
+    while(control->ref != expected) {
+        usleep(30);
+        if(++timeout > 100000) {
+            PS3SessionLog_event("RSX_PANIC: readback DMA timeout reference=%08X actual=%08X",expected,control->ref);
+            ps3glLogGpuState();PS3SessionLog_flushToDisk();exit(1);
+        }
+    }
+    readbackCacheBarrier(scratch,rowBytes*rows);
+    return scratch;
+}
+
 void waitFinish(void)
 {
 	rsxSetWriteBackendLabel(context,GCM_LABEL_INDEX,sLabelVal);
 
 	rsxFlushBuffer(context);
 
-	while(*(vu32*)gcmGetLabelAddress(GCM_LABEL_INDEX)!=sLabelVal)
+	u32 timeout = 0;
+	while(*(vu32*)gcmGetLabelAddress(GCM_LABEL_INDEX)!=sLabelVal) {
 		usleep(30);
+		if (++timeout > 100000) {
+			gcmControlRegister volatile *ctrl = gcmGetControlRegister();
+			PS3SessionLog_event("RSX_PANIC: backend fence timeout expected=%u actual=%u get=%08X put=%08X",
+				sLabelVal, *(vu32*)gcmGetLabelAddress(GCM_LABEL_INDEX), ctrl->get, ctrl->put);
+			ps3glLogGpuState();
+			PS3SessionLog_flushToDisk();
+			exit(1);
+		}
+	}
 
 	++sLabelVal;
 }
@@ -110,7 +168,7 @@ void setRenderTarget(u32 index)
 	sf.x				= 0;
 	sf.y				= 0;
 
-	PS3SessionLog_event("RSX DIAG: setRenderTarget. fb=%d, color_offs=%08X, depth_offs=%08X, color_pitch=%d, depth_pitch=%d", index, sf.colorOffset[0], sf.depthOffset, sf.colorPitch[0], sf.depthPitch);
+	PS3SessionLog_trace("RSX DIAG: setRenderTarget. fb=%d, color_offs=%08X, depth_offs=%08X, color_pitch=%d, depth_pitch=%d", index, sf.colorOffset[0], sf.depthOffset, sf.colorPitch[0], sf.depthPitch);
 	rsxSetSurface(context,&sf);
 }
 
@@ -133,16 +191,18 @@ void waitflip()
 // Thanks to kd-11 for telling me how to fix the issue!
 static void resetCommandBuffer()
 {
-	PS3SessionLog_event("RSX DIAG: resetCommandBuffer start");
-	rsxFinish(context, 1);
+	PS3SessionLog_trace("RSX DIAG: resetCommandBuffer start");
+	waitFinish();
 	u32 startoffs;
 	rsxAddressToOffset(initialCommandBuffer, &startoffs);
 	rsxSetJumpCommand(context, startoffs);
+	// Publish the jump before PUT, just as the SDK's ResetCommandBuffer does.
+	__sync_synchronize();
 	
 	gcmControlRegister volatile *ctrl = gcmGetControlRegister();
 	ctrl->put = startoffs;
 	
-	PS3SessionLog_event("RSX DIAG: Waiting for get == %08X, current get is %08X, current put is %08X", startoffs, ctrl->get, ctrl->put);
+	PS3SessionLog_trace("RSX DIAG: Waiting for get == %08X, current get is %08X, current put is %08X", startoffs, ctrl->get, ctrl->put);
 	
 	u32 timeout = 0;
 	while (ctrl->get != startoffs) {
@@ -154,20 +214,32 @@ static void resetCommandBuffer()
 			exit(1);
 		}
 	}
-	PS3SessionLog_event("RSX DIAG: resetCommandBuffer finished waiting. get is %08X", ctrl->get);
+	PS3SessionLog_trace("RSX DIAG: resetCommandBuffer finished waiting. get is %08X", ctrl->get);
 	
 	// Now safe to reset the CPU pointers
 	context->current = initialCommandBuffer;
 	context->begin   = initialCommandBuffer;
-	context->end     = context->begin + commandBufferSize;
+	// Preserve the SDK's actual end (including its reserved command space).
+	// CB_SIZE is in bytes, whereas pointer addition here counts u32 words.
+	context->end     = initialCommandBufferEnd;
 }
 
 void init_screen(void *host_addr,u32 size)
 {
-	rsxInit(&context,CB_SIZE,size,host_addr);
+	PS3SessionLog_event("BOOT rsxInit begin host=%p size=%u", host_addr, size);
+	if (!host_addr) {
+		PS3SessionLog_event("FATAL RSX host memory allocation failed");
+		exit(1);
+	}
+	s32 result = rsxInit(&context,CB_SIZE,size,host_addr);
+	if (result != 0 || !context) {
+		PS3SessionLog_event("FATAL rsxInit failed result=%d", result);
+		exit(1);
+	}
+	PS3SessionLog_event("BOOT rsxInit complete");
 
 	initialCommandBuffer = context->current;
-	commandBufferSize = CB_SIZE;
+	initialCommandBufferEnd = context->end;
 	videoOutState state;
 	videoOutGetState(0,0,&state);
 
@@ -180,10 +252,13 @@ void init_screen(void *host_addr,u32 size)
 	vconfig.format = VIDEO_OUT_BUFFER_FORMAT_XRGB;
 	vconfig.pitch = res.width*sizeof(u32);
 
+	PS3SessionLog_event("BOOT initial RSX fence begin");
 	waitRSXIdle();
+	PS3SessionLog_event("BOOT initial RSX fence complete; video configuration begin");
 
 	videoOutConfigure(0,&vconfig,NULL,0);
 	videoOutGetState(0,0,&state);
+	PS3SessionLog_event("BOOT video configuration complete width=%u height=%u", res.width, res.height);
 
 	gcmSetFlipMode(GCM_FLIP_VSYNC);
 
@@ -207,8 +282,8 @@ void init_screen(void *host_addr,u32 size)
 
 void flip()
 {
-	PS3SessionLog_event("RSX DIAG: flip() start. ctx->current alignment: %d", ((uintptr_t)context->current) % 4);
-	rsxFinish(context, 0);
+	PS3SessionLog_trace("RSX DIAG: flip() start. ctx->current alignment: %d", ((uintptr_t)context->current) % 4);
+	waitFinish();
 	if(!first_fb) waitflip();
 	else gcmResetFlipStatus();
 
@@ -224,5 +299,5 @@ void flip()
 	setRenderTarget(curr_fb);
 
 	first_fb = 0;
-	PS3SessionLog_event("RSX DIAG: flip() end.");
+	PS3SessionLog_trace("RSX DIAG: flip() end.");
 }

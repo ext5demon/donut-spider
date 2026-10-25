@@ -14,6 +14,18 @@
 // ===[ GLLegacyRenderer Struct ]===
 // Exposed in the header so platform-specific code (main.c) can access FBO fields for screenshots.
 typedef struct {
+    GLuint program;
+    bool attempted, compiled;
+    float uvs[4], pixelSize[2], paletteId, hue;
+} LegacyShader;
+typedef struct {
+    int32_t paletteTpag;
+    float sourcePaletteV;
+    float paletteId, uvs[4];
+    GLuint texture;
+    uint64_t used;
+} LegacyPaletteCache;
+typedef struct {
     Renderer base; // Must be first field for struct embedding
 
     GLuint* glTextures;       // one GL texture per TXTR page
@@ -28,6 +40,15 @@ typedef struct {
     size_t textureCacheBudget;
 
     GLuint whiteTexture; // 1x1 white pixel for drawing primitives (rectangles, lines, etc.)
+    LegacyShader* shaders;
+    int32_t shaderIndex;
+    uint32_t paletteTextureHandle;
+    uint8_t* palettePixels;
+    int32_t palettePixelsTpag;
+    LegacyPaletteCache paletteCache[32];
+    uint64_t paletteClock;
+    GLuint colorEffectProgram;
+    GLuint colorEffectShader;
 
     int32_t windowW; // stored from beginFrame for endFrame blit
     int32_t windowH;
@@ -38,6 +59,10 @@ typedef struct {
     uint32_t originalTexturePageCount;
     uint32_t originalTpagCount;
     uint32_t originalSpriteCount;
+
+    bool fogEnable;
+    bool fogUniformDirty;
+    uint32_t fogColor;
 
     bool colorWriteR, colorWriteG, colorWriteB, colorWriteA;
 

@@ -43,6 +43,7 @@ void GLCommon_surfaceBlit(GLuint* surfaces, int32_t* surfaceWidth, int32_t* surf
 // Returns false on invalid surfaceId.
 // Saves/restores GL_FRAMEBUFFER_BINDING and GL_PACK_ALIGNMENT around the read.
 bool GLCommon_surfaceGetPixels(GLuint* surfaces, int32_t* surfaceWidth, int32_t* surfaceHeight, uint32_t count, int32_t surfaceId, uint8_t* outRGBA);
+bool GLCommon_surfaceGetPixel(GLuint* surfaces, int32_t* surfaceWidth, int32_t* surfaceHeight, uint32_t count, int32_t surfaceId, int32_t x, int32_t y, uint8_t outRGBA[4]);
 
 // ===[ Blend mode translation ]===
 
@@ -52,10 +53,10 @@ GLenum GLCommon_blendFactorToGL(int factor);
 // Maps a bm_* mode constant (bm_normal, bm_add, bm_subtract, ...) to a GL blend equation.
 GLenum GLCommon_blendModeToEquation(int mode);
 
-// Maps a bm_* mode constant to its conventional source blend factor.
-GLenum GLCommon_blendModeToSFactor(int mode);
+// Maps a bm_* mode constant to its GameMaker source blend factor.
+int GLCommon_blendModeToSFactor(int mode);
 
-// Maps a bm_* mode constant to its conventional destination blend factor.
-GLenum GLCommon_blendModeToDFactor(int mode);
+// Maps a bm_* mode constant to its GameMaker destination blend factor.
+int GLCommon_blendModeToDFactor(int mode);
 
 #endif /* _BS_GL_COMMON_H_ */

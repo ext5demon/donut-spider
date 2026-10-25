@@ -167,13 +167,15 @@ struct __attribute__((aligned(16))) ps3gl_opengl_state
 	GLuint color_mask;
 
 	struct {
-		GLushort x,y,w,h;
+		GLint x,y;
+		GLsizei w,h;
 		GLfloat scale[4], offset[4];
 	} viewport;
 
 	struct {
 		GLboolean enabled;
-		GLushort x,y,w,h;
+		GLint x,y;
+		GLsizei w,h;
 	} scissor;
 
 	// Depth

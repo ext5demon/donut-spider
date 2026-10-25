@@ -1,0 +1,6 @@
+* text=auto eol=lf
+*.png binary
+*.wav binary
+*.win binary
+*.fpo binary
+*.jar binary

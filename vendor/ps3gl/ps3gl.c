@@ -4,10 +4,13 @@
 #include "ps3gl.h"
 #include <GL/glext.h>
 #include <stdint.h>
+#include <unistd.h>
 // TODO: Move the rsxutil functionality into ps3glInit
 #include "rsxutil.h"
 
 #include "ps3gl_internal.h"
+#include "pixel_layout.h"
+#include "raster_bounds.h"
 #include "ffp_shader_vpo.h"
 #include "ffp_shader_fpo.h"
 
@@ -16,6 +19,7 @@ extern "C" {
 #endif
 extern void PS3SessionLog_event(const char* format, ...);
 extern void PS3SessionLog_flushToDisk(void);
+extern void PS3SessionLog_trace(const char* format, ...);
 #ifdef __cplusplus
 }
 #endif
@@ -26,10 +30,28 @@ extern void PS3SessionLog_flushToDisk(void);
 
 static struct ps3gl_opengl_state _opengl_state;
 static gcmTexture _opengl_dummy_texture;
+static GLenum ps3glError;
+static uint32_t renderTargetRevision;
+static Ps3glRasterRect lastSubmittedViewport, lastSubmittedScissor;
+static void setError(GLenum error) { if (ps3glError == GL_NO_ERROR) ps3glError = error; }
 
 static inline struct ps3gl_texture* _ps3gl_active_bound_tex(void)
 {
 	return _opengl_state.bound_textures[_opengl_state.active_texture_unit];
+}
+
+void ps3glLogGpuState(void) {
+    struct ps3gl_framebuffer* fb = _opengl_state.bound_draw_framebuffer;
+    struct ps3gl_texture* texture = _opengl_state.bound_textures[0];
+    PS3SessionLog_event("RSX_STATE: draw_fbo=%u target=%ux%u program=%u texture=%u texture_size=%ux%u",
+        fb ? fb->id : 0, fb ? fb->gcmSurface.width : display_width,
+        fb ? fb->gcmSurface.height : display_height, _opengl_state.active_program,
+        texture ? texture->id : 0, texture ? texture->gcmTexture.width : 0,
+        texture ? texture->gcmTexture.height : 0);
+    PS3SessionLog_event("RSX_STATE: GL_viewport=(%d,%d %dx%d) submitted=(%u,%u %ux%u) scissor=(%u,%u %ux%u)",
+        _opengl_state.viewport.x, _opengl_state.viewport.y, _opengl_state.viewport.w, _opengl_state.viewport.h,
+        lastSubmittedViewport.x, lastSubmittedViewport.y, lastSubmittedViewport.w, lastSubmittedViewport.h,
+        lastSubmittedScissor.x, lastSubmittedScissor.y, lastSubmittedScissor.w, lastSubmittedScissor.h);
 }
 
 u32 fp_offset;
@@ -70,12 +92,21 @@ pack_zeta(bool use_stencil, double depth, unsigned stencil)
 
 
 void _setup_draw_env(void);
+static void _ps3gl_setup_render_target(void);
+static void _ps3gl_setup_scissor(void);
 void glClear( GLbitfield mask )
 {
 	extern bool gPS3GL_DebugLogEnabled; if (gPS3GL_DebugLogEnabled) {
 		PS3SessionLog_event("GPU: glClear(0x%X)", mask);
 	}
-	_setup_draw_env();
+	// A clear ignores the GL viewport, textures and shaders. Step events can
+	// leave a screen-sized viewport on a small application surface; loading
+	// that as unsigned RSX coordinates here used to hang the next frame.
+	_ps3gl_setup_render_target();
+	_ps3gl_setup_scissor();
+	rsxSetColorMask(context, _opengl_state.color_mask);
+	rsxSetColorMaskMrt(context, 0);
+	rsxSetDepthWriteEnable(context, _opengl_state.depth_mask);
 	uint32_t rsx_mask = 0;
 
 	if(mask == (GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT|GL_STENCIL_BUFFER_BIT))
@@ -169,10 +200,9 @@ void glPolygonMode( GLenum face, GLenum mode )
 
 void glScissor( GLint x, GLint y, GLsizei width, GLsizei height)
 {
-	GLint targetHeight = (_opengl_state.bound_draw_framebuffer != NULL) ? (GLint) _opengl_state.bound_draw_framebuffer->gcmSurface.height : (GLint) display_height;
-
+	if (width < 0 || height < 0) { setError(GL_INVALID_VALUE); return; }
 	_opengl_state.scissor.x = x;
-	_opengl_state.scissor.y = targetHeight - y - height;
+	_opengl_state.scissor.y = y;
 	_opengl_state.scissor.w = width;
 	_opengl_state.scissor.h = height;
 }
@@ -268,19 +298,20 @@ void glDisable( GLenum cap )
 	}
 }
 
-GLenum glGetError( void ) { return GL_NO_ERROR; } // TODO?
+GLenum glGetError(void) { GLenum result = ps3glError; ps3glError = GL_NO_ERROR; return result; }
 
 static u32 finish_ref_value = 1;
 static void safe_rsxFinish(gcmContextData *ctx) {
-    rsxSetWriteBackendLabel(ctx, 255, finish_ref_value);
+    rsxSetWriteBackendLabel(ctx, 254, finish_ref_value);
     rsxFlushBuffer(ctx);
     
     int retries = 0;
-    while(*(vu32*)gcmGetLabelAddress(255) != finish_ref_value) {
+    while(*(vu32*)gcmGetLabelAddress(254) != finish_ref_value) {
         usleep(30);
         retries++;
         if (retries > 100000) { // ~3 seconds
             PS3SessionLog_event("RSX_PANIC: GPU hung during glFinish! (ref_value=%d)", finish_ref_value);
+            ps3glLogGpuState();
             extern void PS3SessionLog_close(const char*);
             PS3SessionLog_close("GPU HUNG");
             exit(1); 
@@ -407,30 +438,13 @@ void glFrustum( GLdouble left, GLdouble right,
 
 void glViewport( GLint x, GLint y, GLsizei width, GLsizei height )
 {
-	// Y is flipped relative to the currently bound draw target. When an FBO is bound, the target's height is the FBO's surface height, not the screen.
-	GLint targetHeight = (_opengl_state.bound_draw_framebuffer != NULL) ? (GLint) _opengl_state.bound_draw_framebuffer->gcmSurface.height : (GLint) display_height;
-
+	if (width < 0 || height < 0) { setError(GL_INVALID_VALUE); return; }
+	// Keep signed GL coordinates. Conversion and clipping belong at submission,
+	// because binding another FBO can change the target height after this call.
 	_opengl_state.viewport.x = x;
-	_opengl_state.viewport.y = targetHeight - y - height;
+	_opengl_state.viewport.y = y;
 	_opengl_state.viewport.w = width;
 	_opengl_state.viewport.h = height;
-
-	if(_opengl_state.scissor.h == 0)
-	{
-		_opengl_state.scissor.x = x;
-		_opengl_state.scissor.y = targetHeight - y - height; // TODO: Check if this has to be targetHeight - y - height;
-		_opengl_state.scissor.w = width;
-		_opengl_state.scissor.h = height;
-	}
-
-	_opengl_state.viewport.scale[0] = width*0.5f;
-	_opengl_state.viewport.scale[1] = height*-0.5f;
-	_opengl_state.viewport.scale[2] = (_opengl_state.depth_far - _opengl_state.depth_near)*0.5f;
-	_opengl_state.viewport.scale[3] = 0.0f;
-	_opengl_state.viewport.offset[0] = x + width*0.5f;
-	_opengl_state.viewport.offset[1] = (targetHeight - y - height) + height*0.5f;
-	_opengl_state.viewport.offset[2] = (_opengl_state.depth_far + _opengl_state.depth_near)*0.5f;
-	_opengl_state.viewport.offset[3] = 0.0f;
 }
 
 void glPushMatrix(void); // TODO
@@ -860,222 +874,147 @@ void glTexParameterf( GLenum target, GLenum pname, GLfloat param )
 	}
 }
 
-void glTexImage2D( GLenum target, GLint level,
-                   GLint internalFormat,
-                   GLsizei width, GLsizei height,
-                   GLint border, GLenum format, GLenum type,
-                   const GLvoid *pixels )
-{
-	if (_ps3gl_active_bound_tex() == NULL)
-		return;
-
-	//if(pixels == NULL) return;
-
-	struct ps3gl_texture *currentTexture = _ps3gl_active_bound_tex();
-	extern bool gPS3GL_DebugLogEnabled; if (gPS3GL_DebugLogEnabled) {
-		PS3SessionLog_event("glTexImage2D: w=%d h=%d format=0x%x type=0x%x pixels=%p", width, height, format, type, pixels);
-	}
-	currentTexture->gcmTexture.width = width;
-	currentTexture->gcmTexture.height = height;
-	currentTexture->gcmTexture.depth = 1;
-	currentTexture->gcmTexture.mipmap = 1;
-	currentTexture->gcmTexture.location = GCM_LOCATION_RSX;
-
-	switch(target)
-		{
-			case GL_TEXTURE_1D:
-				_ps3gl_active_bound_tex()->gcmTexture.dimension = GCM_TEXTURE_DIMS_1D;
-				break;
-			default:
-			case GL_TEXTURE_2D:
-				_ps3gl_active_bound_tex()->gcmTexture.dimension = GCM_TEXTURE_DIMS_2D;
-				break;
-			case GL_TEXTURE_3D:
-				_ps3gl_active_bound_tex()->gcmTexture.dimension = GCM_TEXTURE_DIMS_3D;
-				break;
-		}
-
-	switch (internalFormat) {
-		case GL_RGB: // There are no 24bpp textures in RSX
-		case 3:
-		case GL_RGBA:
-		case 4:
-			currentTexture->gcmTexture.pitch = width*4;
-			break;
-		case GL_RED:
-		case 1:
-			currentTexture->gcmTexture.pitch = width; // one byte per texel
-			break;
-	}
-
-	switch(format)
-	{
-		case GL_RGB:
-		{
-			if (currentTexture->data != NULL) rsxFree(currentTexture->data);
-			const uint8_t *src = (const uint8_t*)pixels;
-			const int textureSize = width*height*4;
-			rsxAddressToOffset(currentTexture->data, &currentTexture->gcmTexture.offset);
-			currentTexture->gcmTexture.format = GCM_TEXTURE_FORMAT_A8R8G8B8|GCM_TEXTURE_FORMAT_LIN;
-			currentTexture->gcmTexture.remap  = (
-						   (GCM_TEXTURE_REMAP_TYPE_REMAP << GCM_TEXTURE_REMAP_TYPE_A_SHIFT) |
-						   (GCM_TEXTURE_REMAP_TYPE_REMAP << GCM_TEXTURE_REMAP_TYPE_R_SHIFT) |
-						   (GCM_TEXTURE_REMAP_TYPE_REMAP << GCM_TEXTURE_REMAP_TYPE_G_SHIFT) |
-						   (GCM_TEXTURE_REMAP_TYPE_REMAP << GCM_TEXTURE_REMAP_TYPE_B_SHIFT) |
-						   (GCM_TEXTURE_REMAP_COLOR_A << GCM_TEXTURE_REMAP_COLOR_A_SHIFT) |
-						   (GCM_TEXTURE_REMAP_COLOR_R << GCM_TEXTURE_REMAP_COLOR_R_SHIFT) |
-						   (GCM_TEXTURE_REMAP_COLOR_G << GCM_TEXTURE_REMAP_COLOR_G_SHIFT) |
-						   (GCM_TEXTURE_REMAP_COLOR_B << GCM_TEXTURE_REMAP_COLOR_B_SHIFT)
-			);
-
-			if(pixels) {
-				currentTexture->data = (uint8_t*)rsxMemalign(128, textureSize);
-				for(size_t i=0; i<width*height*4; i+=4) {
-					((uint8_t*)currentTexture->data)[i + 0] = 0xFF;   // A
-					((uint8_t*)currentTexture->data)[i + 1] = *src++; // R
-					((uint8_t*)currentTexture->data)[i + 2] = *src++; // G
-					((uint8_t*)currentTexture->data)[i + 3] = *src++; // B
-				}
-			}
-			break;
-		}
-		case GL_RGBA:
-		{
-			if (currentTexture->data != NULL) rsxFree(currentTexture->data);
-			currentTexture->data = (uint8_t*)rsxMemalign(128, width*height*4);
-			if (currentTexture->data == NULL) {
-				extern bool gPS3GL_DebugLogEnabled; if (gPS3GL_DebugLogEnabled) PS3SessionLog_event("glTexImage2D: rsxMemalign FAILED for size %d", width*height*4);
-				return;
-			}
-			rsxAddressToOffset(currentTexture->data, &currentTexture->gcmTexture.offset);
-			currentTexture->gcmTexture.format = GCM_TEXTURE_FORMAT_A8R8G8B8|GCM_TEXTURE_FORMAT_LIN;
-			currentTexture->gcmTexture.remap  = (
-						   (GCM_TEXTURE_REMAP_TYPE_REMAP << GCM_TEXTURE_REMAP_TYPE_A_SHIFT) |
-						   (GCM_TEXTURE_REMAP_TYPE_REMAP << GCM_TEXTURE_REMAP_TYPE_R_SHIFT) |
-						   (GCM_TEXTURE_REMAP_TYPE_REMAP << GCM_TEXTURE_REMAP_TYPE_G_SHIFT) |
-						   (GCM_TEXTURE_REMAP_TYPE_REMAP << GCM_TEXTURE_REMAP_TYPE_B_SHIFT) |
-						   (GCM_TEXTURE_REMAP_COLOR_A << GCM_TEXTURE_REMAP_COLOR_R_SHIFT) |
-						   (GCM_TEXTURE_REMAP_COLOR_R << GCM_TEXTURE_REMAP_COLOR_G_SHIFT) |
-						   (GCM_TEXTURE_REMAP_COLOR_G << GCM_TEXTURE_REMAP_COLOR_B_SHIFT) |
-						   (GCM_TEXTURE_REMAP_COLOR_B << GCM_TEXTURE_REMAP_COLOR_A_SHIFT)
-			);
-			if(pixels) {
-				memcpy((void*)currentTexture->data, pixels, width*height*4);
-			}
-			break;
-		}
-		case GL_RED:
-		{
-			if (type != GL_UNSIGNED_BYTE) {
-				printf("GL_RED: only GL_UNSIGNED_BYTE supported, got %u\n", type);
-				return;
-			}
-			if (currentTexture->data != NULL)
-				rsxFree(currentTexture->data);
-			const int textureSize = width * height; // one byte per texel
-			currentTexture->data = (uint8_t*)rsxMemalign(128, textureSize);
-			memcpy((void*)currentTexture->data, pixels, textureSize);
-			rsxAddressToOffset(currentTexture->data, &currentTexture->gcmTexture.offset);
-			// RSX stores B8 in the blue source channel.
-			// Remap so the shader reads (byte, 0, 0, 1) to match GL_RED's spec semantic.
-			currentTexture->gcmTexture.format = GCM_TEXTURE_FORMAT_B8 | GCM_TEXTURE_FORMAT_LIN;
-			currentTexture->gcmTexture.remap  = (
-						   (GCM_TEXTURE_REMAP_TYPE_REMAP << GCM_TEXTURE_REMAP_TYPE_R_SHIFT) |
-						   (GCM_TEXTURE_REMAP_TYPE_ZERO  << GCM_TEXTURE_REMAP_TYPE_G_SHIFT) |
-						   (GCM_TEXTURE_REMAP_TYPE_ZERO  << GCM_TEXTURE_REMAP_TYPE_B_SHIFT) |
-						   (GCM_TEXTURE_REMAP_TYPE_ONE   << GCM_TEXTURE_REMAP_TYPE_A_SHIFT) |
-						   // For .r output, select B8's only populated channel (blue).
-						   (GCM_TEXTURE_REMAP_COLOR_B << GCM_TEXTURE_REMAP_COLOR_R_SHIFT) |
-						   (GCM_TEXTURE_REMAP_COLOR_R << GCM_TEXTURE_REMAP_COLOR_G_SHIFT) |
-						   (GCM_TEXTURE_REMAP_COLOR_G << GCM_TEXTURE_REMAP_COLOR_B_SHIFT) |
-						   (GCM_TEXTURE_REMAP_COLOR_A << GCM_TEXTURE_REMAP_COLOR_A_SHIFT)
-			);
-			break;
-		}
-		default:
-			printf("Unimplemented Texture Format %u\n!!!!!!", format);
-	}
+void glTexImage2D(GLenum target, GLint level, GLint internalFormat,
+                  GLsizei width, GLsizei height, GLint border,
+                  GLenum format, GLenum type, const GLvoid* pixels) {
+    (void)internalFormat;
+    struct ps3gl_texture* texture = _ps3gl_active_bound_tex();
+    if (!texture || texture->id == 0) { setError(GL_INVALID_OPERATION); return; }
+    if (target != GL_TEXTURE_2D || type != GL_UNSIGNED_BYTE ||
+        (format != GL_RGBA && format != GL_RGB && format != GL_RED)) {
+        setError(GL_INVALID_ENUM); return;
+    }
+    if (level != 0 || border != 0 || width <= 0 || height <= 0 || width > 4096 || height > 4096) {
+        setError(GL_INVALID_VALUE); return;
+    }
+    unsigned components = format == GL_RED ? 1 : (format == GL_RGB ? 3 : 4);
+    size_t pitch = ps3glPixelPitch((unsigned)width, components == 1 ? 1 : 4);
+    size_t bytes = pitch * (size_t)height;
+    uint8_t* data = (uint8_t*)rsxMemalign(128, bytes);
+    if (!data) {
+        setError(GL_OUT_OF_MEMORY);
+        PS3SessionLog_event("RSX texture allocation failed: %dx%d bytes=%u", width, height, (unsigned)bytes);
+        return;
+    }
+    memset(data, 0, bytes);
+    if (pixels) ps3glUploadPixels(data, pitch, pixels, width, height, components);
+    if (texture->data) { glFinish(); rsxFree(texture->data); }
+    texture->data = data;
+    texture->gcmTexture.width = width;
+    texture->gcmTexture.height = height;
+    texture->gcmTexture.depth = 1;
+    texture->gcmTexture.mipmap = 1;
+    texture->gcmTexture.dimension = GCM_TEXTURE_DIMS_2D;
+    texture->gcmTexture.location = GCM_LOCATION_RSX;
+    texture->gcmTexture.pitch = pitch;
+    rsxAddressToOffset(data, &texture->gcmTexture.offset);
+    texture->gcmTexture.format = (components == 1 ? GCM_TEXTURE_FORMAT_B8 : GCM_TEXTURE_FORMAT_A8R8G8B8) | GCM_TEXTURE_FORMAT_LIN;
+    if (components == 1) {
+        texture->gcmTexture.remap =
+            (GCM_TEXTURE_REMAP_TYPE_REMAP << GCM_TEXTURE_REMAP_TYPE_R_SHIFT) |
+            (GCM_TEXTURE_REMAP_TYPE_ZERO << GCM_TEXTURE_REMAP_TYPE_G_SHIFT) |
+            (GCM_TEXTURE_REMAP_TYPE_ZERO << GCM_TEXTURE_REMAP_TYPE_B_SHIFT) |
+            (GCM_TEXTURE_REMAP_TYPE_ONE << GCM_TEXTURE_REMAP_TYPE_A_SHIFT) |
+            (GCM_TEXTURE_REMAP_COLOR_B << GCM_TEXTURE_REMAP_COLOR_R_SHIFT);
+    } else {
+        texture->gcmTexture.remap =
+            (GCM_TEXTURE_REMAP_TYPE_REMAP << GCM_TEXTURE_REMAP_TYPE_A_SHIFT) |
+            (GCM_TEXTURE_REMAP_TYPE_REMAP << GCM_TEXTURE_REMAP_TYPE_R_SHIFT) |
+            (GCM_TEXTURE_REMAP_TYPE_REMAP << GCM_TEXTURE_REMAP_TYPE_G_SHIFT) |
+            (GCM_TEXTURE_REMAP_TYPE_REMAP << GCM_TEXTURE_REMAP_TYPE_B_SHIFT) |
+            (GCM_TEXTURE_REMAP_COLOR_A << GCM_TEXTURE_REMAP_COLOR_A_SHIFT) |
+            (GCM_TEXTURE_REMAP_COLOR_R << GCM_TEXTURE_REMAP_COLOR_R_SHIFT) |
+            (GCM_TEXTURE_REMAP_COLOR_G << GCM_TEXTURE_REMAP_COLOR_G_SHIFT) |
+            (GCM_TEXTURE_REMAP_COLOR_B << GCM_TEXTURE_REMAP_COLOR_B_SHIFT);
+    }
+    rsxInvalidateTextureCache(context, GCM_INVALIDATE_TEXTURE);
 }
 
-void glTexSubImage2D( 
-	GLenum target, GLint level,
-    GLint xoffset, GLint yoffset,
-    GLsizei width, GLsizei height,
-    GLenum format, GLenum type,
-    const GLvoid *pixels 
-)
-{
-	(void)target;
-	(void)level;
-	(void)format;
-	(void)type;
-	if (pixels == NULL || width <= 0 || height <= 0) return;
-
-	struct ps3gl_texture *currentTexture = _ps3gl_active_bound_tex();
-	if (currentTexture == NULL || currentTexture->data == NULL) return;
-
-	uint32_t texW = currentTexture->gcmTexture.width;
-	uint32_t texH = currentTexture->gcmTexture.height;
-	if (texW == 0 || texH == 0) return;
-	if (xoffset < 0 || yoffset < 0) return;
-	if ((uint32_t)xoffset + (uint32_t)width > texW) return;
-	if ((uint32_t)yoffset + (uint32_t)height > texH) return;
-
-	uint8_t* dst = currentTexture->data;
-	const uint8_t* src = (const uint8_t*) pixels;
-	for (int r = 0; r < height; r++) {
-		memcpy(dst + ((size_t)(yoffset + r) * texW + (size_t)xoffset) * 4, src + (size_t)r * width * 4, (size_t)width * 4);
-	}
-	rsxInvalidateTextureCache(context, GCM_INVALIDATE_TEXTURE);
+bool ps3glTextureReady(GLuint id) {
+    return id > 0 && id < MAX_TEXTURES && _opengl_state.textures[id].allocated && _opengl_state.textures[id].data != NULL;
 }
 
-void glGenTextures( GLsizei n, GLuint *textures )
-{
-	if(textures == NULL || n == 0)
-		return;
-
-	for(size_t i = 0; i < n; i++)
-	{
-		_opengl_state.nextTextureID++;
-		GLuint id = _opengl_state.nextTextureID;
-		textures[i] = id;
-		if(id < MAX_TEXTURES)
-		{
-			_opengl_state.textures[id].id = id;
-			_opengl_state.textures[id].allocated = true;
-			_opengl_state.textures[id].minFilter = GCM_TEXTURE_NEAREST_MIPMAP_LINEAR;
-			_opengl_state.textures[id].magFilter = GCM_TEXTURE_LINEAR;
-			_opengl_state.textures[id].data = NULL;
-            _opengl_state.textures[id].target = GL_TEXTURE_2D;
-            _opengl_state.textures[id].wrapS = GCM_TEXTURE_REPEAT;
-            _opengl_state.textures[id].wrapT = GCM_TEXTURE_REPEAT;
-            _opengl_state.textures[id].wrapR = GCM_TEXTURE_REPEAT;
-			_opengl_state.textures[id].fboTex = false;
-		}
-	}
+void glTexSubImage2D(GLenum target, GLint level, GLint xoffset, GLint yoffset,
+                     GLsizei width, GLsizei height, GLenum format, GLenum type,
+                     const GLvoid* pixels) {
+    struct ps3gl_texture* texture = _ps3gl_active_bound_tex();
+    if (!texture || !texture->data || !pixels) { setError(GL_INVALID_OPERATION); return; }
+    if (target != GL_TEXTURE_2D || type != GL_UNSIGNED_BYTE ||
+        (format != GL_RGBA && format != GL_RGB && format != GL_RED)) { setError(GL_INVALID_ENUM); return; }
+    if (level != 0 || width < 0 || height < 0 || xoffset < 0 || yoffset < 0 ||
+        (uint64_t)xoffset + width > texture->gcmTexture.width ||
+        (uint64_t)yoffset + height > texture->gcmTexture.height) { setError(GL_INVALID_VALUE); return; }
+    bool indexTexture = (texture->gcmTexture.format & ~GCM_TEXTURE_FORMAT_LIN) == GCM_TEXTURE_FORMAT_B8;
+    if (indexTexture != (format == GL_RED)) { setError(GL_INVALID_OPERATION); return; }
+    if (width == 0 || height == 0) return;
+    /* The previous frame may still be sampling a streamed video surface. */
+    glFinish();
+    uint8_t* dst = texture->data + (size_t)yoffset * texture->gcmTexture.pitch + (size_t)xoffset * (indexTexture ? 1 : 4);
+    ps3glUploadPixels(dst, texture->gcmTexture.pitch, pixels, width, height, format == GL_RED ? 1 : (format == GL_RGB ? 3 : 4));
+    rsxInvalidateTextureCache(context, GCM_INVALIDATE_TEXTURE);
 }
 
-void glDeleteTextures( GLsizei n, const GLuint *textures)
-{
-	for(size_t i = 0; n > i; i++)
-	{
-		if(_opengl_state.textures[textures[i]].data != NULL)
-			rsxFree(_opengl_state.textures[textures[i]].data);
-		_opengl_state.textures[textures[i]].data = NULL;
-		_opengl_state.textures[textures[i]].allocated = false;
-	}
+static void initTexture(GLuint id) {
+    struct ps3gl_texture* texture = &_opengl_state.textures[id];
+    memset(texture, 0, sizeof(*texture));
+    texture->id = id;
+    texture->allocated = true;
+    texture->target = GL_TEXTURE_2D;
+    texture->minFilter = GCM_TEXTURE_NEAREST_MIPMAP_LINEAR;
+    texture->magFilter = GCM_TEXTURE_LINEAR;
+    texture->wrapS = texture->wrapT = texture->wrapR = GCM_TEXTURE_REPEAT;
 }
 
+void glGenTextures(GLsizei n, GLuint* textures) {
+    if (!textures || n < 0) { setError(GL_INVALID_VALUE); return; }
+    for (GLsizei i = 0; i < n; ++i) {
+        GLuint id;
+        for (id = 1; id < MAX_TEXTURES && _opengl_state.textures[id].allocated; ++id) {}
+        textures[i] = id < MAX_TEXTURES ? id : 0;
+        if (id < MAX_TEXTURES) initTexture(id);
+        else setError(GL_OUT_OF_MEMORY);
+    }
+}
+
+void glDeleteTextures(GLsizei n, const GLuint* textures) {
+    if (!textures || n < 0) { setError(GL_INVALID_VALUE); return; }
+    bool synchronized = false;
+    for (GLsizei i = 0; i < n; ++i) {
+        GLuint id = textures[i];
+        if (id == 0 || id >= MAX_TEXTURES || !_opengl_state.textures[id].allocated) continue;
+        struct ps3gl_texture* texture = &_opengl_state.textures[id];
+        if (texture->data) {
+            if (!synchronized) { glFinish(); synchronized = true; }
+            rsxFree(texture->data);
+        }
+        for (unsigned u = 0; u < MAX_TEX_UNITS; ++u) {
+            if (_opengl_state.bound_textures[u] == texture) {
+                _opengl_state.bound_textures[u] = &_opengl_state.textures[0];
+                _opengl_state.texture_unit_enabled[u] = false;
+            }
+        }
+        for (unsigned f = 1; f < MAX_FRAMEBUFFERS; ++f) {
+            if (_opengl_state.framebuffers[f].fbTexture == texture) {
+                _opengl_state.framebuffers[f].fbTexture = NULL;
+                ++renderTargetRevision;
+            }
+        }
+        memset(texture, 0, sizeof(*texture));
+    }
+}
 
 void glGenFramebuffers( GLsizei n, GLuint *framebuffers )
 {
-	if(framebuffers == NULL || n == 0)
+	if(framebuffers == NULL || n <= 0)
 		return;
 
 	for(size_t i = 0; i < n; i++)
 	{
-		GLuint id = _opengl_state.nextFramebufferID++;
-		framebuffers[i] = id;
+		GLuint id;
+        for (id = 1; id < MAX_FRAMEBUFFERS && _opengl_state.framebuffers[id].allocated; ++id) {}
+        framebuffers[i] = id < MAX_FRAMEBUFFERS ? id : 0;
+        if (id == MAX_FRAMEBUFFERS) { setError(GL_OUT_OF_MEMORY); continue; }
+        memset(&_opengl_state.framebuffers[id], 0, sizeof(_opengl_state.framebuffers[id]));
 		if(id < MAX_FRAMEBUFFERS)
 		{
 			_opengl_state.framebuffers[id].id = id;
@@ -1114,31 +1053,66 @@ void glGenFramebuffers( GLsizei n, GLuint *framebuffers )
 	}
 }
 
-void glDeleteFramebuffers( GLsizei n, const GLuint *framebuffers)
-{
-	for(size_t i = 0; n > i; i++)
-	{
-		struct ps3gl_framebuffer* fb = &_opengl_state.framebuffers[framebuffers[i]];
-		if (fb->depthData != NULL) {
-			rsxFree(fb->depthData);
-			fb->depthData = NULL;
-			fb->depthSize = 0;
-		}
-		fb->allocated = false;
-	}
+void glDeleteFramebuffers(GLsizei n, const GLuint* framebuffers) {
+    if (!framebuffers || n < 0) { setError(GL_INVALID_VALUE); return; }
+    bool synchronized = false;
+    for (GLsizei i = 0; i < n; ++i) {
+        GLuint id = framebuffers[i];
+        if (id == 0 || id >= MAX_FRAMEBUFFERS) continue;
+        struct ps3gl_framebuffer* fb = &_opengl_state.framebuffers[id];
+        if (!fb->allocated) continue;
+        if (fb->depthData) {
+            if (!synchronized) { glFinish(); synchronized = true; }
+            rsxFree(fb->depthData);
+        }
+        if (_opengl_state.bound_read_framebuffer == fb) _opengl_state.bound_read_framebuffer = NULL;
+        if (_opengl_state.bound_draw_framebuffer == fb) _opengl_state.bound_draw_framebuffer = NULL;
+        memset(fb, 0, sizeof(*fb));
+        ++renderTargetRevision;
+    }
 }
 
-void glBindFramebuffer( GLenum target, GLuint framebuffer )
-{
-	if(target == GL_FRAMEBUFFER) _opengl_state.bound_read_framebuffer =_opengl_state.bound_draw_framebuffer = (framebuffer != 0) ? &_opengl_state.framebuffers[framebuffer] : NULL;
-	if(target == GL_READ_FRAMEBUFFER) _opengl_state.bound_read_framebuffer = (framebuffer != 0) ? &_opengl_state.framebuffers[framebuffer] : NULL;
-	if(target == GL_DRAW_FRAMEBUFFER) _opengl_state.bound_draw_framebuffer = (framebuffer != 0) ? &_opengl_state.framebuffers[framebuffer] : NULL;
+void glBindFramebuffer(GLenum target, GLuint framebuffer) {
+    if (framebuffer >= MAX_FRAMEBUFFERS || (framebuffer && !_opengl_state.framebuffers[framebuffer].allocated)) {
+        setError(GL_INVALID_OPERATION); return;
+    }
+    struct ps3gl_framebuffer* fb = framebuffer ? &_opengl_state.framebuffers[framebuffer] : NULL;
+    if (target == GL_FRAMEBUFFER || target == GL_READ_FRAMEBUFFER) _opengl_state.bound_read_framebuffer = fb;
+    if (target == GL_FRAMEBUFFER || target == GL_DRAW_FRAMEBUFFER) {
+        // A recently rendered attachment may already be bound for sampling.
+        // Binding-descriptor caches must not keep its old texture-cache data.
+        if (_opengl_state.bound_draw_framebuffer != fb) rsxInvalidateTextureCache(context,GCM_INVALIDATE_TEXTURE);
+        _opengl_state.bound_draw_framebuffer = fb;
+    }
 }
+
+GLenum glCheckFramebufferStatus(GLenum target);
 
 GLAPI void APIENTRY glBlitFramebuffer (GLint srcX0, GLint srcY0, GLint srcX1, GLint srcY1, GLint dstX0, GLint dstY0, GLint dstX1, GLint dstY1, GLbitfield mask, GLenum filter)
 {
-  gcmTransferScale scale;
-  gcmTransferSurface surface;
+  if (!(mask & GL_COLOR_BUFFER_BIT)) return;
+  struct ps3gl_framebuffer* read = _opengl_state.bound_read_framebuffer;
+  struct ps3gl_framebuffer* draw = _opengl_state.bound_draw_framebuffer;
+  int readW = read ? read->gcmSurface.width : display_width;
+  int readH = read ? read->gcmSurface.height : display_height;
+  int drawW = draw ? draw->gcmSurface.width : display_width;
+  int drawH = draw ? draw->gcmSurface.height : display_height;
+  if ((read && glCheckFramebufferStatus(GL_READ_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) ||
+      (draw && glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)) {
+      setError(GL_INVALID_OPERATION); return;
+  }
+  if ((int64_t)srcX1 - srcX0 == (int64_t)dstX1 - dstX0 &&
+      (int64_t)srcY1 - srcY0 == (int64_t)dstY1 - dstY0) {
+      if (!ps3glClipCopyAxis(&srcX0, &srcX1, &dstX0, &dstX1, readW, drawW) ||
+          !ps3glClipCopyAxis(&srcY0, &srcY1, &dstY0, &dstY1, readH, drawH)) return;
+  }
+  if (srcX0 < 0 || srcY0 < 0 || dstX0 < 0 || dstY0 < 0 ||
+      srcX1 <= srcX0 || srcY1 <= srcY0 || dstX1 <= dstX0 || dstY1 <= dstY0 ||
+      srcX1 > readW || srcY1 > readH || dstX1 > drawW || dstY1 > drawH) {
+      setError(GL_INVALID_VALUE); return;
+  }
+  gcmTransferScale scale = {0};
+  gcmTransferSurface surface = {0};
 
   GLint dstW = dstX1-dstX0;
   GLint dstH = dstY1-dstY0;
@@ -1159,15 +1133,15 @@ GLAPI void APIENTRY glBlitFramebuffer (GLint srcX0, GLint srcY0, GLint srcX1, GL
   scale.outY = dstY0;
   scale.outW = dstW;
   scale.outH = dstH;
-  scale.ratioX = (srcW << 20) / dstW;
-  scale.ratioY = (srcH << 20) / dstH;
+  scale.ratioX = ((int64_t)srcW << 20) / dstW;
+  scale.ratioY = ((int64_t)srcH << 20) / dstH;
   scale.inX = rsxGetFixedUint16(srcX0);
   scale.inY = rsxGetFixedUint16(srcY0);
-  scale.inW = srcW;
-  scale.inH = srcH;
+  scale.inW = readW;
+  scale.inH = readH;
   scale.offset = _opengl_state.bound_read_framebuffer != NULL ? 
 				_opengl_state.bound_read_framebuffer->gcmSurface.colorOffset[0] :
-				color_offset[curr_fb^1];
+				color_offset[curr_fb];
   scale.pitch = _opengl_state.bound_read_framebuffer != NULL ? 
 				_opengl_state.bound_read_framebuffer->gcmSurface.colorPitch[0] :
 				color_pitch;
@@ -1182,154 +1156,102 @@ GLAPI void APIENTRY glBlitFramebuffer (GLint srcX0, GLint srcY0, GLint srcX1, GL
 
   rsxSetTransferScaleMode(context, GCM_TRANSFER_LOCAL_TO_LOCAL, GCM_TRANSFER_SURFACE);
   rsxSetTransferScaleSurface(context, &scale, &surface);
+  rsxInvalidateTextureCache(context, GCM_INVALIDATE_TEXTURE);
 }
 
-GLenum glCheckFramebufferStatus (GLenum target) {
-	return GL_FRAMEBUFFER_COMPLETE;
+GLenum glCheckFramebufferStatus(GLenum target) {
+    struct ps3gl_framebuffer* fb = target == GL_READ_FRAMEBUFFER ? _opengl_state.bound_read_framebuffer : _opengl_state.bound_draw_framebuffer;
+    if (!fb) return GL_FRAMEBUFFER_COMPLETE;
+    if (!fb->fbTexture || !fb->fbTexture->data || !fb->depthData) return GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT;
+    return GL_FRAMEBUFFER_COMPLETE;
 }
 
-// TODO: Assumes attachment = GL_COLOR_ATTACHMENT0, textarget = GL_TEXTURE_2D and level = 0;
-void glFramebufferTexture2D (GLenum target, GLenum attachment, GLenum textarget, GLuint texture, GLint level) {
-	struct ps3gl_texture *tx = &_opengl_state.textures[texture];
-	struct ps3gl_framebuffer* dstFB;
-	if(target == GL_FRAMEBUFFER || target == GL_DRAW_FRAMEBUFFER)
-		dstFB = _opengl_state.bound_draw_framebuffer;
-	else if(target == GL_READ_FRAMEBUFFER)
-		dstFB = _opengl_state.bound_read_framebuffer;
-	
-
-	dstFB->fbTexture = tx;
-
-	// If framebuffer don't swap channels
-	tx->gcmTexture.remap  = (
-				   (GCM_TEXTURE_REMAP_TYPE_REMAP << GCM_TEXTURE_REMAP_TYPE_A_SHIFT) |
-				   (GCM_TEXTURE_REMAP_TYPE_REMAP << GCM_TEXTURE_REMAP_TYPE_R_SHIFT) |
-				   (GCM_TEXTURE_REMAP_TYPE_REMAP << GCM_TEXTURE_REMAP_TYPE_G_SHIFT) |
-				   (GCM_TEXTURE_REMAP_TYPE_REMAP << GCM_TEXTURE_REMAP_TYPE_B_SHIFT) |
-				   (GCM_TEXTURE_REMAP_COLOR_A << GCM_TEXTURE_REMAP_COLOR_A_SHIFT) |
-				   (GCM_TEXTURE_REMAP_COLOR_R << GCM_TEXTURE_REMAP_COLOR_R_SHIFT) |
-				   (GCM_TEXTURE_REMAP_COLOR_G << GCM_TEXTURE_REMAP_COLOR_G_SHIFT) |
-				   (GCM_TEXTURE_REMAP_COLOR_B << GCM_TEXTURE_REMAP_COLOR_B_SHIFT)
-	);
-
-	gcmSurface* sf = &dstFB->gcmSurface;
-
-	sf->colorFormat		= GCM_SURFACE_A8R8G8B8;
-	sf->colorTarget		= GCM_SURFACE_TARGET_0;
-	sf->colorLocation[0]	= GCM_LOCATION_RSX;
-	sf->colorOffset[0]	= tx->gcmTexture.offset;
-	sf->colorPitch[0]	= tx->gcmTexture.pitch;
-	sf->width			= tx->gcmTexture.width;
-	sf->height			= tx->gcmTexture.height;
-	sf->type			= GCM_SURFACE_TYPE_LINEAR;
-	sf->antiAlias		= GCM_SURFACE_CENTER_1;
-
-	sf->colorLocation[1]	= GCM_LOCATION_RSX;
-	sf->colorLocation[2]	= GCM_LOCATION_RSX;
-	sf->colorLocation[3]	= GCM_LOCATION_RSX;
-	sf->colorOffset[1]	= 0;
-	sf->colorOffset[2]	= 0;
-	sf->colorOffset[3]	= 0;
-	sf->colorPitch[1]	= 64;
-	sf->colorPitch[2]	= 64;
-	sf->colorPitch[3]	= 64;
-
-	// YES WE NEED A REAL DEPTH BUFFER, IF NOT RSX (OR RPCS3?) WILL DROP ANY WRITES BEYOND ~1280X1280
-	// WE ALSO CAN'T SET THE DEPTH FORMAT TO 0 (RPCS3 DOES NOT LIKE THIS)
-	{
-		uint32_t depthPitch = ((tx->gcmTexture.width * 4u) + 63u) & ~63u;
-		uint32_t depthSize  = depthPitch * tx->gcmTexture.height;
-		if (dstFB->depthData != NULL && dstFB->depthSize < depthSize) {
-			rsxFree(dstFB->depthData);
-			dstFB->depthData = NULL;
-			dstFB->depthSize = 0;
-		}
-		if (dstFB->depthData == NULL) {
-			dstFB->depthData = rsxMemalign(128, depthSize);
-			dstFB->depthSize = depthSize;
-		}
-		uint32_t depthOff = 0;
-		rsxAddressToOffset(dstFB->depthData, &depthOff);
-		sf->depthFormat   = GCM_SURFACE_ZETA_Z24S8;
-		sf->depthLocation = GCM_LOCATION_RSX;
-		sf->depthOffset   = depthOff;
-		sf->depthPitch    = depthPitch;
-	}
-
-
-	// This is wrong but i dont think i can skip a depth attachment
-	/*
-	sf.depthFormat		= GCM_SURFACE_ZETA_Z24S8;
-	sf.depthLocation	= GCM_LOCATION_RSX;
-	sf.depthOffset		= depth_offset;
-	sf.depthPitch		= depth_pitch;
-	*/
+void glFramebufferTexture2D(GLenum target, GLenum attachment, GLenum textarget, GLuint texture, GLint level) {
+    if (attachment != GL_COLOR_ATTACHMENT0 || textarget != GL_TEXTURE_2D || level != 0) {
+        setError(GL_INVALID_OPERATION); return;
+    }
+    struct ps3gl_framebuffer* fb = target == GL_READ_FRAMEBUFFER
+        ? _opengl_state.bound_read_framebuffer : _opengl_state.bound_draw_framebuffer;
+    if (!fb) { setError(GL_INVALID_OPERATION); return; }
+    if (texture == 0) { fb->fbTexture = NULL; ++renderTargetRevision; return; }
+    if (!ps3glTextureReady(texture)) { setError(GL_INVALID_OPERATION); return; }
+    struct ps3gl_texture* tx = &_opengl_state.textures[texture];
+    if ((tx->gcmTexture.format & ~GCM_TEXTURE_FORMAT_LIN) != GCM_TEXTURE_FORMAT_A8R8G8B8) {
+        setError(GL_INVALID_OPERATION); return;
+    }
+    uint32_t depthPitch = ps3glPixelPitch(tx->gcmTexture.width, 4);
+    uint32_t depthSize = depthPitch * tx->gcmTexture.height;
+    /* Allocate first so a failed reattachment leaves the old target usable. */
+    if (!fb->depthData || fb->depthSize < depthSize) {
+        void* replacement = rsxMemalign(128, depthSize);
+        if (!replacement) { setError(GL_OUT_OF_MEMORY); return; }
+        memset(replacement, 0, depthSize);
+        if (fb->depthData) { glFinish(); rsxFree(fb->depthData); }
+        fb->depthData = replacement;
+        fb->depthSize = depthSize;
+    }
+    fb->fbTexture = tx;
+    gcmSurface* sf = &fb->gcmSurface;
+    sf->colorOffset[0] = tx->gcmTexture.offset;
+    sf->colorPitch[0] = tx->gcmTexture.pitch;
+    sf->width = tx->gcmTexture.width;
+    sf->height = tx->gcmTexture.height;
+    sf->depthPitch = depthPitch;
+    rsxAddressToOffset(fb->depthData, &sf->depthOffset);
+    ++renderTargetRevision;
 }
 
 void glGetIntegerv( GLenum pname, GLint *params )
 {
 	if(pname == GL_FRAMEBUFFER_BINDING) *params = _opengl_state.bound_draw_framebuffer ? _opengl_state.bound_draw_framebuffer->id : 0;
-	if(pname == GL_PACK_ALIGNMENT) *params = 1;
+	if(pname == GL_READ_FRAMEBUFFER_BINDING) *params = _opengl_state.bound_read_framebuffer ? _opengl_state.bound_read_framebuffer->id : 0;
+    if(pname == GL_TEXTURE_BINDING_2D) *params = _ps3gl_active_bound_tex() ? _ps3gl_active_bound_tex()->id : 0;
+    if(pname == GL_PACK_ALIGNMENT) *params = 1;
 }
 
 void glPixelStorei( GLenum pname, GLint param ) {}
 
-void glReadPixels( GLint x, GLint y,
-                                    GLsizei width, GLsizei height,
-                                    GLenum format, GLenum type,
-                                    GLvoid *pixels )
-{
-	void* data = (_opengl_state.bound_read_framebuffer == NULL) ?
-	(void*)color_buffer[curr_fb^1] :
-	(void*)_opengl_state.bound_read_framebuffer->fbTexture->data;
-
-    // Ensure that the draw calls were executed
-	if(format == GL_RGBA && type == GL_UNSIGNED_BYTE) {
-		rsxFinish(context, 1);
-		waitFinish();
-		const uint8_t* src = (const uint8_t*) data;
-		size_t srcRowBytes = width*4;
-		size_t dstRowBytes = (size_t) width * 4;
-		for(size_t row = 0; row < height; row++) {
-			const uint8_t* srcLine = src + ((size_t) y + (height - row)) * srcRowBytes + (size_t) (x * 4);
-			uint8_t* dstLine = pixels + (size_t) row * dstRowBytes;
-			for(size_t px = 0; px < width; px++) {
-				// Swizzle from ARGB to RGBA
-				uint8_t a = srcLine[px * 4 + 0];
-				uint8_t r = srcLine[px * 4 + 1];
-				uint8_t g = srcLine[px * 4 + 2];
-				uint8_t b = srcLine[px * 4 + 3];
-				dstLine[px * 4 + 0] = r;
-				dstLine[px * 4 + 1] = g;
-				dstLine[px * 4 + 2] = b;
-				dstLine[px * 4 + 3] = a;
-			}
-		}
-	}
+void glReadPixels(GLint x, GLint y, GLsizei width, GLsizei height,
+                  GLenum format, GLenum type, GLvoid* pixels) {
+    if (width < 0 || height < 0 || !pixels) { setError(GL_INVALID_VALUE); return; }
+    if (format != GL_RGBA || type != GL_UNSIGNED_BYTE) { setError(GL_INVALID_ENUM); return; }
+    struct ps3gl_framebuffer* fb = _opengl_state.bound_read_framebuffer;
+    if (fb && (!fb->fbTexture || !fb->fbTexture->data)) { setError(GL_INVALID_OPERATION); return; }
+    unsigned w = fb ? fb->gcmSurface.width : display_width;
+    unsigned h = fb ? fb->gcmSurface.height : display_height;
+    u32 pitch = fb ? fb->gcmSurface.colorPitch[0] : color_pitch;
+    u32 offset = fb ? fb->gcmSurface.colorOffset[0] : color_offset[curr_fb];
+    if ((size_t)width > SIZE_MAX / 4 / (height ? (size_t)height : 1)) {setError(GL_INVALID_VALUE);return;}
+    memset(pixels,0,(size_t)width*height*4);
+    int64_t x0=x<0?0:x, y0=y<0?0:y;
+    int64_t x1=(int64_t)x+width,y1=(int64_t)y+height;
+    if(x1>w)x1=w;if(y1>h)y1=h;
+    if(x0>=x1||y0>=y1)return;
+    u32 rowBytes=(u32)(x1-x0)*4;
+    u32 maxRows=PS3GL_READBACK_CAPACITY/rowBytes;
+    if(!maxRows){setError(GL_OUT_OF_MEMORY);return;}
+    for(int64_t row=y0;row<y1;) {
+        u32 count=(u32)(y1-row);if(count>maxRows)count=maxRows;
+        u32 source=offset+(u32)(h-row-count)*pitch+(u32)x0*4;
+        const uint8_t* data=rsxReadbackTransfer(source,pitch,rowBytes,count);
+        if(!data){setError(GL_OUT_OF_MEMORY);return;}
+        for(u32 j=0;j<count;++j) {
+            const uint8_t* in=data+(size_t)(count-1-j)*rowBytes;
+            uint8_t* out=(uint8_t*)pixels+((size_t)(row-y+j)*width+(size_t)(x0-x))*4;
+            for(u32 col=0;col<rowBytes;col+=4) {
+                out[col]=in[col+1];out[col+1]=in[col+2];out[col+2]=in[col+3];out[col+3]=in[col];
+            }
+        }
+        row+=count;
+    }
 }
 
-void glBindTexture( GLenum target, GLuint texture )
-{
-
-	if(texture < MAX_TEXTURES && !_opengl_state.textures[texture].allocated) {
-		_opengl_state.textures[texture].id = texture;
-		_opengl_state.textures[texture].allocated = true;
-		_opengl_state.textures[texture].minFilter = GCM_TEXTURE_NEAREST_MIPMAP_LINEAR;
-		_opengl_state.textures[texture].magFilter = GCM_TEXTURE_LINEAR;
-		_opengl_state.textures[texture].data = NULL;
-        _opengl_state.textures[texture].target = GL_TEXTURE_2D;
-        _opengl_state.textures[texture].wrapS = GCM_TEXTURE_REPEAT;
-        _opengl_state.textures[texture].wrapT = GCM_TEXTURE_REPEAT;
-        _opengl_state.textures[texture].wrapR = GCM_TEXTURE_REPEAT;
-	}
-
-    if (texture < MAX_TEXTURES && _opengl_state.textures[texture].allocated) {
-        _opengl_state.textures[texture].target = target;
-        _opengl_state.textures[texture].gcmTexture.cubemap = (target == GL_TEXTURE_CUBE_MAP);
-    }
-
+void glBindTexture(GLenum target, GLuint texture) {
+    if (texture >= MAX_TEXTURES) { setError(GL_INVALID_VALUE); return; }
+    if (texture && !_opengl_state.textures[texture].allocated) initTexture(texture);
+    _opengl_state.textures[texture].target = target;
     _opengl_state.bound_textures[_opengl_state.active_texture_unit] = &_opengl_state.textures[texture];
-    _opengl_state.texture_unit_enabled[_opengl_state.active_texture_unit] = (texture != 0);
+    _opengl_state.texture_unit_enabled[_opengl_state.active_texture_unit] = texture != 0;
 }
 
 void glActiveTexture(GLenum texture)
@@ -1502,6 +1424,7 @@ GLuint glCreateProgram(void)
 			p->vertexShader = 0;
 			p->fragmentShader = 0;
 			p->uniformCount = 0;
+	memset(p->uniforms,0,sizeof(p->uniforms));
 			return i;
 		}
 	}
@@ -1547,6 +1470,7 @@ void glLinkProgram(GLuint program)
 	}
 
 	p->uniformCount = 0;
+	memset(p->uniforms,0,sizeof(p->uniforms));
 
 	// The OpenGL spec says that samplers default to texture unit 0 at program creation.
 	// To match this behavior, we'll prepopulate all sampler attribs to 0 to avoid unforeseen consequences.
@@ -1786,6 +1710,7 @@ void glUniformMatrix4fv(GLint location, GLsizei count, GLboolean transpose, cons
 
 static void _program_exit_callback(void)
 {
+	if (!context) return;
 	gcmSetWaitFlip(context);
 	rsxFinish(context,1);
 }
@@ -1796,7 +1721,7 @@ static void _ps3gl_bind_unit_to_rsx_slot(GLuint glUnit, int rsxSlot)
 	struct ps3gl_texture *tex = _opengl_state.bound_textures[glUnit];
 	gcmTexture* gcmTex = &_opengl_dummy_texture;
 
-	if (tex != NULL && tex->gcmTexture.width != 0 && tex->gcmTexture.height != 0 && tex->gcmTexture.offset != 0) {
+	if (tex != NULL && tex->gcmTexture.width != 0 && tex->gcmTexture.height != 0 && tex->data != NULL) {
 		gcmTex = &tex->gcmTexture;
 	}
 
@@ -1889,16 +1814,14 @@ void glGetFloatv(GLenum pname, GLfloat *params)
 
 bool gPS3GL_DebugLogEnabled = false;
 
-void _setup_draw_env(void) {
-    extern bool gPS3GL_DebugLogEnabled; if (gPS3GL_DebugLogEnabled) {
-        PS3SessionLog_event("DRAW_ENV START");
-    }
-
+static void _ps3gl_setup_render_target(void) {
     static struct ps3gl_framebuffer* last_bound_fb = (struct ps3gl_framebuffer*)0xFFFFFFFF;
     static u32 last_bound_curr_fb = 0xFFFFFFFF;
+    static uint32_t lastRevision = UINT32_MAX;
     if (_opengl_state.bound_draw_framebuffer != NULL) {
-        if (last_bound_fb != _opengl_state.bound_draw_framebuffer) {
+        if (last_bound_fb != _opengl_state.bound_draw_framebuffer || lastRevision != renderTargetRevision) {
             rsxSetSurface(context, &_opengl_state.bound_draw_framebuffer->gcmSurface);
+            lastRevision = renderTargetRevision;
             last_bound_fb = _opengl_state.bound_draw_framebuffer;
             last_bound_curr_fb = 0xFFFFFFFF;
         }
@@ -1909,6 +1832,25 @@ void _setup_draw_env(void) {
             last_bound_fb = NULL;
         }
     }
+}
+
+static void _ps3gl_setup_scissor(void) {
+    unsigned w = _opengl_state.bound_draw_framebuffer ? _opengl_state.bound_draw_framebuffer->gcmSurface.width : display_width;
+    unsigned h = _opengl_state.bound_draw_framebuffer ? _opengl_state.bound_draw_framebuffer->gcmSurface.height : display_height;
+    Ps3glRasterRect r = {0, 0, (uint16_t)w, (uint16_t)h};
+    if (_opengl_state.scissor.enabled) {
+        r = ps3glClipRasterRect(_opengl_state.scissor.x, _opengl_state.scissor.y,
+                                _opengl_state.scissor.w, _opengl_state.scissor.h, w, h);
+    }
+    rsxSetScissor(context, r.x, r.y, r.w, r.h);
+    lastSubmittedScissor = r;
+}
+
+void _setup_draw_env(void) {
+    extern bool gPS3GL_DebugLogEnabled; if (gPS3GL_DebugLogEnabled) {
+        PS3SessionLog_event("DRAW_ENV START");
+    }
+    _ps3gl_setup_render_target();
 
 	rsxSetShadeModel(context, _opengl_state.shade_model);
 	rsxSetPointSize(context, _opengl_state.point_size);
@@ -1980,40 +1922,25 @@ void _setup_draw_env(void) {
 		rsxSetFogParams(context, p0, p1);
 	}
 
-	// Viewport and Scissor
-	rsxSetViewport(context, 
-		_opengl_state.viewport.x, 
-		_opengl_state.viewport.y, 
-		_opengl_state.viewport.w, 
-		_opengl_state.viewport.h, 
+	// Clip unsigned hardware bounds without changing the logical transform.
+	unsigned targetW = _opengl_state.bound_draw_framebuffer ? _opengl_state.bound_draw_framebuffer->gcmSurface.width : display_width;
+	unsigned targetH = _opengl_state.bound_draw_framebuffer ? _opengl_state.bound_draw_framebuffer->gcmSurface.height : display_height;
+	Ps3glRasterRect viewport = ps3glClipRasterRect(_opengl_state.viewport.x, _opengl_state.viewport.y,
+		_opengl_state.viewport.w, _opengl_state.viewport.h, targetW, targetH);
+	lastSubmittedViewport = viewport;
+	ps3glViewportTransform(_opengl_state.viewport.x, _opengl_state.viewport.y,
+		_opengl_state.viewport.w, _opengl_state.viewport.h, targetH,
+		_opengl_state.depth_near, _opengl_state.depth_far,
+		_opengl_state.viewport.scale, _opengl_state.viewport.offset);
+	rsxSetViewport(context,
+		viewport.x, viewport.y, viewport.w, viewport.h,
 		_opengl_state.depth_near,
 		_opengl_state.depth_far, 
 		_opengl_state.viewport.scale, 
 		_opengl_state.viewport.offset
 	);
 
-	uint16_t max_w = (_opengl_state.bound_draw_framebuffer != NULL) ? _opengl_state.bound_draw_framebuffer->gcmSurface.width : display_width;
-	uint16_t max_h = (_opengl_state.bound_draw_framebuffer != NULL) ? _opengl_state.bound_draw_framebuffer->gcmSurface.height : display_height;
-
-	uint16_t sc_x, sc_y, sc_w, sc_h;
-	if(_opengl_state.scissor.enabled) {
-		sc_x = _opengl_state.scissor.x;
-		sc_y = _opengl_state.scissor.y;
-		sc_w = _opengl_state.scissor.w;
-		sc_h = _opengl_state.scissor.h;
-	} else {
-		sc_x = _opengl_state.viewport.x;
-		sc_y = _opengl_state.viewport.y;
-		sc_w = _opengl_state.viewport.w;
-		sc_h = _opengl_state.viewport.h;
-	}
-
-	if (sc_x > max_w) sc_x = max_w;
-	if (sc_y > max_h) sc_y = max_h;
-	if ((uint32_t)sc_x + (uint32_t)sc_w > max_w) sc_w = max_w - sc_x;
-	if ((uint32_t)sc_y + (uint32_t)sc_h > max_h) sc_h = max_h - sc_y;
-
-	rsxSetScissor(context, sc_x, sc_y, sc_w, sc_h);
+	_ps3gl_setup_scissor();
 
 	extern bool gPS3GL_DebugLogEnabled; if (gPS3GL_DebugLogEnabled) {
 		PS3SessionLog_event("DRAW_ENV: state commands done, loading texture...");
@@ -2075,7 +2002,7 @@ void _setup_draw_env(void) {
 	if (ffpFp) {
 		bool hardware_tex_enabled = false;
 		struct ps3gl_texture *tex = _opengl_state.bound_textures[0];
-		if (tex != NULL && tex->id != 0 && tex->gcmTexture.width != 0 && tex->gcmTexture.height != 0 && tex->gcmTexture.offset != 0) {
+		if (_opengl_state.texture_unit_enabled[0] && tex != NULL && tex->id != 0 && tex->gcmTexture.width != 0 && tex->gcmTexture.height != 0 && tex->data != NULL) {
 			hardware_tex_enabled = true;
 		}
 		
@@ -2136,7 +2063,7 @@ void ps3glInit(void)
 	_opengl_state.prog_consts[PS3GL_Uniform_FogColor] = rsxFragmentProgramGetConst(fpo, "uFogColor");
 
 	// Setup dummy texture
-	void* dummy_tex_data = rsxMemalign(128, 4);
+	void* dummy_tex_data = rsxMemalign(128, 64);
 	*(uint32_t*)dummy_tex_data = 0xFFFFFFFF; // white pixel
 	uint32_t dummy_tex_offset;
 	rsxAddressToOffset(dummy_tex_data, &dummy_tex_offset);
@@ -2148,7 +2075,7 @@ void ps3glInit(void)
 	_opengl_dummy_texture.width = 1;
 	_opengl_dummy_texture.height = 1;
 	_opengl_dummy_texture.depth = 1;
-	_opengl_dummy_texture.pitch = 4;
+	_opengl_dummy_texture.pitch = 64;
 	_opengl_dummy_texture.location = GCM_LOCATION_RSX;
 	_opengl_dummy_texture.offset = dummy_tex_offset;
 
@@ -2191,6 +2118,8 @@ void ps3glInit(void)
 	glClearColor(0, 0, 0, 0);
 	glClearDepth(1.0f);
 	glClearStencil(0);
+	glViewport(0, 0, display_width, display_height);
+	glScissor(0, 0, display_width, display_height);
 
 	// Matrices
 	glMatrixMode(GL_PROJECTION);
@@ -2224,6 +2153,6 @@ void ps3glInit(void)
 
 void ps3glSwapBuffers(void)
 {
-	PS3SessionLog_event("RSX DIAG: ps3glSwapBuffers. buffer space used: %d / %d bytes.", (int)((uint8_t*)context->current - (uint8_t*)context->begin), (int)(context->end - context->begin) * 4);
+	PS3SessionLog_trace("RSX DIAG: ps3glSwapBuffers. buffer space used: %d / %d bytes.", (int)((uint8_t*)context->current - (uint8_t*)context->begin), (int)(context->end - context->begin) * 4);
 	flip();
 }

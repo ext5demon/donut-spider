@@ -35,6 +35,7 @@ extern unsigned char paletted_fpo[];
 extern unsigned int  paletted_fpo_len;
 GLuint gPalettedProgram = 0;
 GLint  gPalettedUPaletteVLoc = -1;
+GLint gPalettedFogLoc = -1;
 
 #include <io/pad.h>
 #include <sys/systime.h>
@@ -43,80 +44,63 @@ GLint  gPalettedUPaletteVLoc = -1;
 #include <ppu_intrinsics.h>
 #include <sys/stat.h>
 
-typedef struct {
-    uint8_t digital;
-    uint8_t mask;
-    int32_t gmlKey;
-} PadMapping;
-
-const PadMapping PAD_MAPPINGS[] = {
-    { PAD_BUTTON_OFFSET_DIGITAL1, PAD_CTRL_UP,       VK_UP },
-    { PAD_BUTTON_OFFSET_DIGITAL1, PAD_CTRL_DOWN,     VK_DOWN },
-    { PAD_BUTTON_OFFSET_DIGITAL1, PAD_CTRL_LEFT,     VK_LEFT },
-    { PAD_BUTTON_OFFSET_DIGITAL1, PAD_CTRL_RIGHT,    VK_RIGHT },
-    { PAD_BUTTON_OFFSET_DIGITAL1, PAD_CTRL_START,    VK_F12 },
-#ifdef DONUT_SPIDER_DEV_BUILD
-    { PAD_BUTTON_OFFSET_DIGITAL1, PAD_CTRL_SELECT,   VK_F12 },
-#endif
-    { PAD_BUTTON_OFFSET_DIGITAL2, PAD_CTRL_CROSS,    'Z' },
-    { PAD_BUTTON_OFFSET_DIGITAL2, PAD_CTRL_CIRCLE,   'X' },
-    { PAD_BUTTON_OFFSET_DIGITAL2, PAD_CTRL_SQUARE,   'X' },
-    { PAD_BUTTON_OFFSET_DIGITAL2, PAD_CTRL_TRIANGLE, 'C' },
-    { PAD_BUTTON_OFFSET_DIGITAL2, PAD_CTRL_L1,       VK_PAGEDOWN },
-    { PAD_BUTTON_OFFSET_DIGITAL2, PAD_CTRL_R1,       VK_PAGEUP },
-    { PAD_BUTTON_OFFSET_DIGITAL2, PAD_CTRL_L2,       VK_F10 },
-};
-#define PAD_MAPPING_COUNT (sizeof(PAD_MAPPINGS) / sizeof(PAD_MAPPINGS[0]))
-static bool prevState[sizeof(PAD_MAPPINGS) / sizeof(PAD_MAPPINGS[0])] = {0};
-
 #ifdef DONUT_SPIDER_DEV_BUILD
 static void runSurfaceReadbackSelfTest(void) {
-    GLuint texture = 0;
-    GLuint framebuffer = 0;
-    uint8_t pixel[4] = {0, 0, 0, 0};
-
+    const uint8_t pattern[24] = {
+        10,20,30,0, 40,50,60,64, 70,80,90,128,
+        11,21,31,192, 41,51,61,254, 71,81,91,255
+    };
+    GLuint texture = 0, framebuffer = 0;
+    uint8_t pixels[16] = {0};
+    while (glGetError() != GL_NO_ERROR) {}
     glGenTextures(1, &texture);
     glBindTexture(GL_TEXTURE_2D, texture);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 2, 2, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 3, 2, 0, GL_RGBA, GL_UNSIGNED_BYTE, pattern);
     glGenFramebuffers(1, &framebuffer);
     glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
-    glViewport(0, 0, 2, 2);
-    glDisable(GL_SCISSOR_TEST);
-    glDisable(GL_BLEND);
-    glColorMask(true, true, true, true);
-    glClearColor(0.25f, 0.50f, 0.75f, 0.875f);
-    glClear(GL_COLOR_BUFFER_BIT);
-    glReadPixels(0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel);
-    fprintf(stderr, "GLSELFTEST: clear expected RGBA~64,128,191,223 read=%u,%u,%u,%u\n",
-            (unsigned)pixel[0], (unsigned)pixel[1], (unsigned)pixel[2], (unsigned)pixel[3]);
-
+    bool ready = texture && framebuffer && glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+    bool crop = false, clear = false;
+    if (ready) {
+        glReadPixels(1, 0, 2, 2, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+        crop = memcmp(pixels, pattern + 16, 8) == 0 && memcmp(pixels + 8, pattern + 4, 8) == 0;
+        // A narrow viewport must not limit an unscissored clear.
+        glViewport(0, 0, 1, 1);
+        glDisable(GL_SCISSOR_TEST);
+        glDisable(GL_BLEND);
+        glColorMask(true, true, true, true);
+        glClearColor(0.25f, 0.50f, 0.75f, 0.875f);
+        glClear(GL_COLOR_BUFFER_BIT);
+        glReadPixels(2, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+        clear = abs((int)pixels[0]-64) <= 1 && abs((int)pixels[1]-128) <= 1 &&
+                abs((int)pixels[2]-191) <= 1 && abs((int)pixels[3]-223) <= 1;
+    }
+    GLenum error = glGetError();
+    PS3SessionLog_event("GLSELFTEST %s: crop/alpha=%s clear=%s RGBA=%u,%u,%u,%u error=0x%X",
+        ready && crop && clear && error == GL_NO_ERROR ? "PASS" : "FAIL",
+        crop ? "PASS" : "FAIL", clear ? "PASS" : "FAIL",
+        pixels[0], pixels[1], pixels[2], pixels[3], error);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glDeleteFramebuffers(1, &framebuffer);
     glDeleteTextures(1, &texture);
+    // Exercise many more lifetimes than the fixed-size handle table permits
+    // simultaneously. Generation/deletion alone must not exhaust that table.
+    bool reuse = true;
+    for (unsigned i = 0; i < 2048; ++i) {
+        glGenTextures(1, &texture);
+        glGenFramebuffers(1, &framebuffer);
+        if (!texture || !framebuffer) reuse = false;
+        glDeleteTextures(1, &texture);
+        glDeleteFramebuffers(1, &framebuffer);
+    }
+    PS3SessionLog_event("GLSELFTEST handle_reuse=%s", reuse && glGetError() == GL_NO_ERROR ? "PASS" : "FAIL");
     glBindTexture(GL_TEXTURE_2D, 0);
-    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+    glViewport(0, 0, display_width, display_height);
+    glClearColor(0, 0, 0, 0);
     glColorMask(true, true, true, true);
 }
+
 #endif
-
-#define STICK_CENTER 0x80 // The center of the stick (range 0x00-0xFF)
-#define STICK_THRESHOLD 0x40 // The threshold for treating stick movement as a d-pad press
-
-typedef struct {
-    uint8_t axis;
-    int8_t  sign;
-    int32_t gmlKey;
-} StickMapping;
-
-const StickMapping STICK_MAPPINGS[] = {
-    { PAD_BUTTON_OFFSET_ANALOG_LEFT_X, -1, VK_LEFT  },
-    { PAD_BUTTON_OFFSET_ANALOG_LEFT_X, +1, VK_RIGHT },
-    { PAD_BUTTON_OFFSET_ANALOG_LEFT_Y, -1, VK_UP    },
-    { PAD_BUTTON_OFFSET_ANALOG_LEFT_Y, +1, VK_DOWN  },
-};
-#define STICK_MAPPING_COUNT (sizeof(STICK_MAPPINGS) / sizeof(STICK_MAPPINGS[0]))
-static bool prevStickState[sizeof(STICK_MAPPINGS) / sizeof(STICK_MAPPINGS[0])] = {0};
 
 // ===[ MAIN ]===
 static double freq = 0;
@@ -189,6 +173,19 @@ int main(int argc, char* argv[]) {
     extern bool gPS3GL_DebugLogEnabled;
     gPS3GL_DebugLogEnabled = false;
 
+    // Open the log before any graphics, controller or overlay initialization.
+    // A failure in those stages must leave a useful log on disk too.
+    const char* executablePath = argc > 0 && argv[0] != nullptr ? argv[0] : "./EBOOT.BIN";
+    char* appDirectory = directoryOfPath(executablePath);
+    if (!PS3SessionLog_open(appDirectory)) {
+        PS3SessionLog_open("/dev_hdd0/game/DONSD0001/USRDIR");
+    }
+    extern bool gPS3SessionLog_ForceDiskFlush;
+    gPS3SessionLog_ForceDiskFlush = true;
+    PS3SessionLog_event("SESSION START executable=%s", executablePath);
+    PS3SessionLog_phase("graphics-init", -1, 0);
+    PS3SessionLog_event("BOOT graphics initialization begin");
+
     sysUtilRegisterCallback(SYSUTIL_EVENT_SLOT0, sys_callback, NULL);
     freq = sysGetTimebaseFrequency();
 
@@ -196,19 +193,23 @@ int main(int argc, char* argv[]) {
     // any game-owned data. Private development builds may opt into the bundled
     // WAD fast path for repeatable RPCS3 tests.
     ps3glInit();
-#ifdef DONUT_SPIDER_DEV_BUILD
-    // runSurfaceReadbackSelfTest();
-#endif
+    PS3SessionLog_event("BOOT graphics initialization complete");
+    PS3SessionLog_phase("controller-init", -1, 0);
     ioPadInit(7);
+    PS3PadState controller;
+    PS3Pad_init(&controller);
+    PS3SessionLog_phase("overlay-init", -1, 0);
     PS3Overlay_init();
 
-    const char* executablePath = argc > 0 && argv[0] != nullptr ? argv[0] : "./EBOOT.BIN";
     printf("%s %s executable: %s\n", DONUT_SPIDER_DISPLAY_NAME, DONUT_SPIDER_VERSION, executablePath);
-    char* appDirectory = directoryOfPath(executablePath);
-    PS3SessionLog_open(appDirectory);
-    extern bool gPS3SessionLog_ForceDiskFlush;
-    gPS3SessionLog_ForceDiskFlush = true;
-    PS3SessionLog_event("SESSION START executable=%s", executablePath);
+#ifdef DONUT_SPIDER_DEV_BUILD
+    PS3SessionLog_phase("surface-self-test", -1, 0);
+    PS3SessionLog_event("BOOT surface readback self-test begin (bounded M2MF)");
+    runSurfaceReadbackSelfTest();
+    PS3SessionLog_event("BOOT surface readback self-test complete");
+#endif
+    PS3SessionLog_phase("chapter-picker", -1, 0);
+    PS3SessionLog_event("BOOT chapter picker begin");
     char* bundledWadPath = joinPath(appDirectory, "data.win");
     char* dataWinPath = nullptr;
 #ifdef DONUT_SPIDER_DEV_PRELOAD_WAD
@@ -222,7 +223,7 @@ int main(int argc, char* argv[]) {
     free(bundledTexturesPath);
     free(bundledTexturesLowerPath);
 #endif
-    if (dataWinPath == nullptr) dataWinPath = PS3WadPicker_select(bundledWadPath, &shouldExit);
+    if (dataWinPath == nullptr) dataWinPath = PS3WadPicker_select(bundledWadPath, &shouldExit, &controller);
     free(bundledWadPath);
     if (dataWinPath == nullptr) {
         PS3SessionLog_close(shouldExit ? "system exit in WAD picker" : "WAD picker cancelled");
@@ -333,10 +334,11 @@ int main(int argc, char* argv[]) {
         free(texturesBinPath);
         texturesBinPath = joinPath(dataWinDir, "textures.bin");
     }
-    if (!PS3Textures_init(texturesBinPath)) {
+    if (!PS3Textures_init(texturesBinPath) || !PS3Textures_validate(dataWin)) {
         fprintf(stderr, "FATAL: failed to load %s\n", texturesBinPath);
         PS3SessionLog_event("FATAL texture bundle failed path=%s", texturesBinPath);
         PS3SessionLog_close("texture bundle failed");
+        PS3Textures_free();
         free(texturesBinPath);
         OverlayFileSystem_destroy(overlayFs);
         VM_free(vm);
@@ -370,6 +372,7 @@ int main(int argc, char* argv[]) {
         glAttachShader(gPalettedProgram, fs);
         glLinkProgram(gPalettedProgram);
         gPalettedUPaletteVLoc = glGetUniformLocation(gPalettedProgram, "uPaletteV");
+        gPalettedFogLoc = glGetUniformLocation(gPalettedProgram, "uFogColor");
         GLint uPaletteLoc = glGetUniformLocation(gPalettedProgram, "uPalette");
         GLint uIndexLoc = glGetUniformLocation(gPalettedProgram, "uIndex");
         glUseProgram(gPalettedProgram);
@@ -394,12 +397,22 @@ int main(int argc, char* argv[]) {
                         runner->currentRoom != nullptr && runner->currentRoom->name != nullptr ? runner->currentRoom->name : "?",
                         runner->currentRoomIndex);
 
+    // Keep the picker's controller and its last changed-packet snapshot.
+    PS3Pad_poll(&controller);
+    PS3Pad_beginGameplay(&controller);
+    PS3SessionLog_event("INPUT handoff port=%d valid=%d confirm_suppressed=%d error=0x%08X",
+                        controller.port, controller.valid, controller.suppressConfirm, (unsigned)controller.error);
+
     // Main loop
     bool debugPaused = false;
     bool debugShowCollisionMasks = false;
     double lastFrameStartTime = PS3_GET_TIME; // for delta_time and frame pacing
     double nextSessionHeartbeat = lastFrameStartTime;
     int32_t lastLoggedRoomIndex = -1;
+    int lastInputPort = -2;
+    int32_t lastInputError = 0;
+    bool lastInputValid = false;
+    bool firstInputLogged = false;
     while (!shouldExit && !runner->shouldExit) {
         // Clear last frame's pressed/released state, then poll new input events
         RunnerKeyboard_beginFrame(runner->keyboard);
@@ -414,55 +427,18 @@ int main(int argc, char* argv[]) {
         }
 
 
-        padInfo padinfo;
-        ioPadGetInfo(&padinfo);
-
-        if (padinfo.status[0])
-        {
-            padData paddata;
-            ioPadGetData(0, &paddata);
-
-            // "The padData structure is only filled if there is a change in input since the last call.
-            // If there is no change, the structure is zero-filled. If the len member is zero, there was no new input."
-            // So we'll check if there WAS a change before trying to process the keys, to avoid releasing the keys on every frame.
-            // -ioPadGetData
-            if (paddata.len > 0) {
-                uint8_t d1 = (uint8_t) paddata.button[PAD_BUTTON_OFFSET_DIGITAL1];
-                uint8_t d2 = (uint8_t) paddata.button[PAD_BUTTON_OFFSET_DIGITAL2];
-                repeat(PAD_MAPPING_COUNT, i) {
-                    uint8_t byte = (PAD_MAPPINGS[i].digital == PAD_BUTTON_OFFSET_DIGITAL1) ? d1 : d2;
-                    uint8_t mask = PAD_MAPPINGS[i].mask;
-                    int32_t gmlKey = PAD_MAPPINGS[i].gmlKey;
-
-                    bool isPressed = (byte & mask) != 0;
-                    bool wasPressed = prevState[i];
-
-                    if (isPressed && !wasPressed) {
-                        RunnerKeyboard_onKeyDown(runner->keyboard, gmlKey);
-                    } else if (!isPressed && wasPressed) {
-                        RunnerKeyboard_onKeyUp(runner->keyboard, gmlKey);
-                    }
-
-                    prevState[i] = isPressed;
-                }
-
-                repeat(STICK_MAPPING_COUNT, i) {
-                    int axisValue = (int) (uint8_t) paddata.button[STICK_MAPPINGS[i].axis];
-                    int signedDelta = STICK_MAPPINGS[i].sign * (axisValue - STICK_CENTER);
-
-                    bool isPressed = signedDelta > STICK_THRESHOLD;
-                    bool wasPressed = prevStickState[i];
-                    int32_t gmlKey = STICK_MAPPINGS[i].gmlKey;
-
-                    if (isPressed && !wasPressed) {
-                        RunnerKeyboard_onKeyDown(runner->keyboard, gmlKey);
-                    } else if (!isPressed && wasPressed) {
-                        RunnerKeyboard_onKeyUp(runner->keyboard, gmlKey);
-                    }
-
-                    prevStickState[i] = isPressed;
-                }
-            }
+        PS3Pad_poll(&controller);
+        PS3Pad_updateKeyboard(&controller, runner->keyboard);
+        if (controller.port != lastInputPort || controller.error != lastInputError || controller.valid != lastInputValid) {
+            PS3SessionLog_event("INPUT controller port=%d valid=%d error=0x%08X",
+                                controller.port, controller.valid, (unsigned)controller.error);
+            lastInputPort = controller.port;
+            lastInputError = controller.error;
+            lastInputValid = controller.valid;
+        }
+        if (!firstInputLogged && RunnerKeyboard_check(runner->keyboard, VK_ANYKEY)) {
+            PS3SessionLog_event("INPUT first gameplay key=%d port=%d", runner->keyboard->lastKey, controller.port);
+            firstInputLogged = true;
         }
 
 #ifdef DONUT_SPIDER_DEV_BUILD
@@ -484,9 +460,10 @@ int main(int argc, char* argv[]) {
 #ifdef DONUT_SPIDER_DEV_BUILD
             double stepStart = PS3_GET_TIME;
 #endif
-            PS3SessionLog_event("FRAME %d STEP START", runner->frameCount);
+            PS3SessionLog_trace("FRAME %d STEP START", runner->frameCount);
+            PS3SessionLog_phase("step", runner->currentRoomIndex, runner->frameCount);
             Runner_step(runner);
-            PS3SessionLog_event("FRAME %d STEP END", runner->frameCount);
+            PS3SessionLog_trace("FRAME %d STEP END", runner->frameCount);
 #ifdef DONUT_SPIDER_DEV_BUILD
             stepTime = PS3_GET_TIME - stepStart;
 #endif
@@ -498,6 +475,7 @@ int main(int argc, char* argv[]) {
 #ifdef DONUT_SPIDER_DEV_BUILD
             double audioStart = PS3_GET_TIME;
 #endif
+            PS3SessionLog_phase("audio", runner->currentRoomIndex, runner->frameCount);
             runner->audioSystem->vtable->update(runner->audioSystem, dt);
 #ifdef DONUT_SPIDER_DEV_BUILD
             audioTime = PS3_GET_TIME - audioStart;
@@ -507,7 +485,12 @@ int main(int argc, char* argv[]) {
         // Query actual framebuffer size (differs from window size on Wayland with fractional scaling)
         int fbWidth = display_width, fbHeight = display_height;
 
+        PS3SessionLog_phase("draw", runner->currentRoomIndex, runner->frameCount);
         // Clear the default framebuffer (window background) to black
+        // Step events can render to a temporary surface and reset to the app
+        // surface. Explicitly select the display before this display clear.
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glViewport(0, 0, fbWidth, fbHeight);
         glClear(GL_COLOR_BUFFER_BIT);
 
         int32_t gameW = (int32_t) gen8->defaultWindowWidth;
@@ -520,7 +503,7 @@ int main(int argc, char* argv[]) {
 #ifdef DONUT_SPIDER_DEV_BUILD
         double drawStart = PS3_GET_TIME;
 #endif
-        PS3SessionLog_event("FRAME %d DRAW START", runner->frameCount);
+        PS3SessionLog_trace("FRAME %d DRAW START", runner->frameCount);
         
         Runner_drawViews(runner, gameW, gameH, debugShowCollisionMasks);
         renderer->vtable->endFrameInit(renderer);
@@ -539,6 +522,12 @@ int main(int argc, char* argv[]) {
         // Real-time FPS logger
         static double fpsLastLogTime = 0;
         static int fpsFrameCount = 0;
+#ifdef DONUT_SPIDER_DEV_BUILD
+        static double perfStepTime = 0, perfDrawTime = 0, perfAudioTime = 0;
+        perfStepTime += stepTime;
+        perfDrawTime += drawTime;
+        perfAudioTime += audioTime;
+#endif
         fpsFrameCount++;
         double nowTime = PS3_GET_TIME;
         if (fpsLastLogTime == 0) fpsLastLogTime = nowTime;
@@ -547,6 +536,12 @@ int main(int argc, char* argv[]) {
             double currentFps = (double)fpsFrameCount / elapsedSec;
             double avgMs = (elapsedSec / (double)fpsFrameCount) * 1000.0;
             PS3SessionLog_event("PERF STATS: FPS=%.2f (avg_frame_time=%.2f ms, total_frames=%d)", currentFps, avgMs, runner->frameCount);
+#ifdef DONUT_SPIDER_DEV_BUILD
+            PS3SessionLog_event("PERF PHASES: step_ms=%.2f draw_ms=%.2f audio_ms=%.2f",
+                perfStepTime * 1000.0 / fpsFrameCount, perfDrawTime * 1000.0 / fpsFrameCount,
+                perfAudioTime * 1000.0 / fpsFrameCount);
+            perfStepTime = perfDrawTime = perfAudioTime = 0;
+#endif
             printf("PERF STATS: FPS=%.2f (avg_frame_time=%.2f ms, total_frames=%d)\n", currentFps, avgMs, runner->frameCount);
             fpsFrameCount = 0;
             fpsLastLogTime = nowTime;
@@ -555,10 +550,12 @@ int main(int argc, char* argv[]) {
         sysUtilCheckCallback();
         // Only swap when there isn't a room change to match the original runner.
         if (runner->pendingRoom == -1) {
-            PS3SessionLog_event("FRAME %d SWAP START", runner->frameCount);
+            PS3SessionLog_trace("FRAME %d SWAP START", runner->frameCount);
+            PS3SessionLog_phase("swap", runner->currentRoomIndex, runner->frameCount);
             ps3glSwapBuffers();
-            PS3SessionLog_event("FRAME %d SWAP END", runner->frameCount);
+            PS3SessionLog_trace("FRAME %d SWAP END", runner->frameCount);
         }
+        PS3SessionLog_phase("room transition", runner->currentRoomIndex, runner->frameCount);
         Runner_handlePendingRoomChange(runner);
 
         if (runner->currentRoomIndex != lastLoggedRoomIndex) {
@@ -584,6 +581,7 @@ int main(int argc, char* argv[]) {
             nextSessionHeartbeat = sessionNow + 10.0;
         }
 
+        PS3SessionLog_phase("frame wait", runner->currentRoomIndex, runner->frameCount);
         // Limit frame rate to room speed
         if (runner->currentRoom->speed > 0) {
             double targetFrameTime = 1.0 / runner->currentRoom->speed;
@@ -599,6 +597,7 @@ int main(int argc, char* argv[]) {
 
     // Runner teardown may release video surfaces and audio streams, so both
     // backends must remain alive until it has finished.
+    PS3SessionLog_phase("teardown", runner->currentRoomIndex, runner->frameCount);
     Runner_free(runner);
     audioSystem->vtable->destroy(audioSystem);
     renderer->vtable->destroy(renderer);

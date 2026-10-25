@@ -738,8 +738,7 @@ static RValue resolveVariableRead(VMContext* ctx, int32_t instanceType, uint32_t
 
     // Check for built-in variable (varID == -6 sentinel)
     if (varDef->varID == VARIABLE_BUILTIN) {
-        // Structs aren't real game instances, but structs CAN store fields with the same names as built-ins.
-        // So we'll check the self variables FIRST before checking for built-ins.
+        // Struct fields are independent of instance built-ins with the same names.
         if (targetInstance != nullptr && targetInstance->objectIndex == STRUCT_OBJECT_INDEX) {
             ptrdiff_t nameSlot = shgeti(ctx->varNameMap, (char*) varDef->name);
             if (nameSlot >= 0) {
@@ -748,6 +747,7 @@ static RValue resolveVariableRead(VMContext* ctx, int32_t instanceType, uint32_t
                 if (tryReadInstanceVarOrStatic(ctx, targetInstance, structVarID, &access, &value))
                     return value;
             }
+            return RValue_makeUndefined();
         }
 
         RValue result = VMBuiltins_getVariable(ctx, targetInstance, varDef->builtinVarId, varDef->name, access.arrayIndex);
@@ -834,7 +834,10 @@ static RValue resolveVariableRead(VMContext* ctx, int32_t instanceType, uint32_t
 static void writeSingleInstanceVariable(VMContext* ctx, Instance* inst, Variable* varDef, ArrayAccess* access, RValue val) {
     // Built-in variable (varID == -6 sentinel)
     if (varDef->varID == VARIABLE_BUILTIN) {
-        VMBuiltins_setVariable(ctx, inst, varDef->builtinVarId, varDef->name, val, access->arrayIndex);
+        if (inst != nullptr && inst->objectIndex == STRUCT_OBJECT_INDEX)
+            VM_structSet(ctx, inst, varDef->name, val, access->arrayIndex);
+        else
+            VMBuiltins_setVariable(ctx, inst, varDef->builtinVarId, varDef->name, val, access->arrayIndex);
         return;
     }
 
@@ -997,7 +1000,10 @@ static void resolveVariableWrite(VMContext* ctx, int32_t instanceType, uint32_t 
 
     // Check for built-in variable (varID == -6 sentinel)
     if (varDef->varID == VARIABLE_BUILTIN) {
-        VMBuiltins_setVariable(ctx, targetInstance, varDef->builtinVarId, varDef->name, val, access.arrayIndex);
+        if (targetInstance != nullptr && targetInstance->objectIndex == STRUCT_OBJECT_INDEX)
+            VM_structSet(ctx, targetInstance, varDef->name, val, access.arrayIndex);
+        else
+            VMBuiltins_setVariable(ctx, targetInstance, varDef->builtinVarId, varDef->name, val, access.arrayIndex);
 
 #ifdef ENABLE_VM_TRACING
         if (instanceType == INSTANCE_GLOBAL) {
@@ -1831,17 +1837,43 @@ static void handleCmp(VMContext* ctx, uint32_t instr) {
 
 // Converts a native byte count to RValue slot count by walking the stack backwards from a given position.
 // Reads each slot's gmlStackType (set at push time) to compute its native footprint.
+static void stackLayoutError(VMContext* ctx, int32_t bytes, int32_t pos) {
+    fprintf(stderr, "VM STACK ERROR: code=%s ip=0x%X top=%d position=%d bytes=%d\n",
+            ctx->currentCodeName ? ctx->currentCodeName : "<unknown>",
+            ctx->ip, ctx->stack.top, pos, bytes);
+    for (int32_t i = ctx->stack.top - 1; i >= 0 && i >= ctx->stack.top - 12; --i)
+        fprintf(stderr, "  slot[%d] nativeType=%u valueType=%u\n", i,
+                ctx->stack.slots[i].gmlStackType, ctx->stack.slots[i].type);
+    fflush(stderr);
+    abort();
+}
+
 static int32_t bytesToSlotCount(VMContext* ctx, int32_t nativeBytes, int32_t stackPos) {
     int32_t slots = 0;
     int32_t remaining = nativeBytes;
     while (remaining > 0) {
         slots++;
-        require(stackPos >= slots);
+        if (stackPos < slots || stackPos > ctx->stack.top)
+            stackLayoutError(ctx, nativeBytes, stackPos);
         uint8_t slotGmlType = ctx->stack.slots[stackPos - slots].gmlStackType;
-        remaining -= gmlTypeNativeSize(slotGmlType);
+        int32_t slotSize = gmlTypeNativeSize(slotGmlType);
+        // Calls return boxed values even when the following opcode requests a
+        // scalar footprint. Consume that complete value, never part of a slot.
+        if (slotGmlType == GML_TYPE_VARIABLE && remaining < slotSize)
+            remaining = 0;
+        else
+            remaining -= slotSize;
     }
-    require(remaining == 0); // Byte count must align exactly to slot boundaries
+    if (remaining != 0) stackLayoutError(ctx, nativeBytes, stackPos);
     return slots;
+}
+
+static void reverseStackSlots(RValue* slots, int32_t count) {
+    for (int32_t i = 0; i < count / 2; ++i) {
+        RValue value = slots[i];
+        slots[i] = slots[count - 1 - i];
+        slots[count - 1 - i] = value;
+    }
 }
 
 static void handleDup(VMContext* ctx, uint32_t instr) {
@@ -1861,28 +1893,24 @@ static void handleDup(VMContext* ctx, uint32_t instr) {
         int32_t topBytes = topNativeCount * typeSize;
         int32_t bottomBytes = bottomNativeCount * typeSize;
 
-        // Convert byte counts to slot counts
-        int32_t topSlots = bytesToSlotCount(ctx, topBytes, ctx->stack.top);
-        int32_t bottomSlots = bytesToSlotCount(ctx, bottomBytes, ctx->stack.top - topSlots);
+        // dup.v swap counts values, including unboxed arithmetic results.
+        // Other forms count native bytes. This matters for Chapter 5 menus.
+        int32_t topSlots = topNativeCount;
+        int32_t bottomSlots = bottomNativeCount;
+        if (type1 != GML_TYPE_VARIABLE) {
+            topSlots = bytesToSlotCount(ctx, topBytes, ctx->stack.top);
+            bottomSlots = bytesToSlotCount(ctx, bottomBytes, ctx->stack.top - topSlots);
+        }
 
         int32_t totalSlots = topSlots + bottomSlots;
+        if (totalSlots > ctx->stack.top) stackLayoutError(ctx, totalSlots, ctx->stack.top);
         int32_t baseIdx = ctx->stack.top - totalSlots;
 
-        // Save top group to temp
-        RValue temp[32];
-        for (int32_t i = 0; topSlots > i; i++) {
-            temp[i] = ctx->stack.slots[ctx->stack.top - topSlots + i];
-        }
-
-        // Shift bottom group up to where top group was
-        for (int32_t i = bottomSlots - 1; i >= 0; i--) {
-            ctx->stack.slots[baseIdx + topSlots + i] = ctx->stack.slots[baseIdx + i];
-        }
-
-        // Place top group at the bottom
-        for (int32_t i = 0; topSlots > i; i++) {
-            ctx->stack.slots[baseIdx + i] = temp[i];
-        }
+        // Rotate in place: operands can exceed the old 32-value temporary.
+        // Plain moves preserve each value's ownership without extra references.
+        reverseStackSlots(ctx->stack.slots + baseIdx, bottomSlots);
+        reverseStackSlots(ctx->stack.slots + baseIdx + bottomSlots, topSlots);
+        reverseStackSlots(ctx->stack.slots + baseIdx, totalSlots);
         return;
     }
 #endif

@@ -17,9 +17,15 @@ typedef struct {
     size_t bufferBase;
     size_t bufferSize;
     size_t bufferPos; // current read position relative to bufferBase
+    // Optional caller-owned read window for pointer-heavy lazy payloads. Unlike
+    // a strict chunk buffer, arbitrary seeks outside this window refill it.
+    uint8_t* fileCache;
+    size_t fileCacheCapacity, fileCacheBase, fileCacheLength, fileCachePosition;
+    size_t fileCacheFills, fileCacheBytesRead;
 } BinaryReader;
 
 BinaryReader BinaryReader_create(FILE* file, size_t fileSize);
+void BinaryReader_setFileCache(BinaryReader* reader, uint8_t* cache, size_t capacity);
 
 // Sets a memory buffer for bulk chunk reading
 // All subsequent reads will come from this buffer until it is cleared

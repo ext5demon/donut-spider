@@ -73,6 +73,14 @@ bool WAV_ParseFileData(uint8_t const* data, size_t dataSize, WAVFile* outFile) {
   if (memcmp(file.header.file_id, "RIFF", 4) != 0 ||
       memcmp(file.header.format, "WAVE", 4) != 0 ||
       memcmp(file.header.data_id, "data", 4) != 0 ||
+      memcmp(file.header.subchunk_id, "fmt ", 4) != 0 ||
+      file.header.subchunk_size != 16 || file.header.audio_format != 1 ||
+      (file.header.number_of_channels != 1 && file.header.number_of_channels != 2) ||
+      (file.header.bits_per_sample != 8 && file.header.bits_per_sample != 16) ||
+      file.header.sample_rate == 0 || file.header.sample_rate > 192000 ||
+      file.header.block_align != file.header.number_of_channels * (file.header.bits_per_sample / 8) ||
+      file.header.byte_rate != file.header.sample_rate * file.header.block_align ||
+      file.header.data_size % file.header.block_align != 0 ||
       file.header.data_size > dataSize - 44) {
     return false;
   }
@@ -98,4 +106,21 @@ bool WAV_ParseFileData(uint8_t const* data, size_t dataSize, WAVFile* outFile) {
 
   *outFile = file;
   return true;
+}
+
+void WAV_declickShortSample(WAVFile* file) {
+  if(!file||!file->data||file->header.number_of_channels!=1||file->header.bits_per_sample!=16)return;
+  unsigned frames=file->data_length/2,rate=file->header.sample_rate;
+  // Dialogue blips can start/end at a nonzero sample. That step is an audible
+  // broadband click when many 40ms sounds are retriggered. Taper just 1ms at
+  // each discontinuous edge, once when caching; preserve duration and pitch.
+  if(!rate||frames<rate/250||frames>rate/4)return;
+  unsigned ramp=rate/1000;if(ramp<2||ramp>frames/2)return;
+  int16_t first,last;memcpy(&first,file->data,2);memcpy(&last,file->data+(frames-1)*2,2);
+  for(unsigned i=0;i<ramp;++i) {
+    float gain=(float)i/(ramp-1);
+    int16_t value;
+    if(first) {memcpy(&value,file->data+i*2,2);value=(int16_t)(value*gain);memcpy(file->data+i*2,&value,2);}
+    if(last) {unsigned j=frames-1-i;memcpy(&value,file->data+j*2,2);value=(int16_t)(value*gain);memcpy(file->data+j*2,&value,2);}
+  }
 }
