@@ -25,6 +25,17 @@ int main(void) {
     assert(window);
     glfwMakeContextCurrent(window);
     assert(gladLoadGLLoader((GLADloadproc) glfwGetProcAddress));
+    // GML can enable alpha testing without ever setting its reference.
+    // Start from hostile host GL state and exercise the real renderer init.
+    glEnable(GL_ALPHA_TEST); glAlphaFunc(GL_ALWAYS, 1.0f);
+    DataWin initData = {.txtr = {.count = 1}, .shdr = {.count = 1}};
+    GLLegacyRenderer* initialized = safeCalloc(1, sizeof(*initialized));
+    glInit(&initialized->base, &initData);
+    GLint alphaFunc; GLfloat alphaRef;
+    glGetIntegerv(GL_ALPHA_TEST_FUNC, &alphaFunc);
+    glGetFloatv(GL_ALPHA_TEST_REF, &alphaRef);
+    assert(!glIsEnabled(GL_ALPHA_TEST) && alphaFunc == GL_GREATER && alphaRef == 0.0f);
+    glDestroy(&initialized->base);
     GLLegacyRenderer renderer = {0};
     Renderer* base = &renderer.base;
     glGpuSetBlendMode(base, bm_normal);
@@ -63,6 +74,23 @@ int main(void) {
     glGpuSetFog(base, false, 0);
     drawQuad(); glReadPixels(1, 1, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel);
     assert(memcmp(pixel, texel, 4) == 0);
+
+    // Knight-style destination-alpha masking: transparent areas of a layer
+    // must not erase the mask. Enabling the test uses the startup reference.
+    glClearColor(0, 0, 0, 1); glClear(GL_COLOR_BUFFER_BIT);
+    glGpuSetBlendEnable(base, true);
+    glGpuSetBlendModeExt(base, bm_src_alpha, bm_one, bm_dest_alpha, bm_zero);
+    glGpuSetAlphaTestEnable(base, true);
+    unsigned char transparent[] = {200, 100, 50, 0};
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, transparent);
+    drawQuad(); glReadPixels(1, 1, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel);
+    assert(pixel[0] == 0 && pixel[1] == 0 && pixel[2] == 0 && pixel[3] == 255);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, texel);
+    drawQuad(); glReadPixels(1, 1, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel);
+    assert(abs((int)pixel[0] - 50) <= 1 && abs((int)pixel[3] - 64) <= 1);
+    glGpuSetAlphaTestEnable(base, false); glGpuSetBlendEnable(base, false);
+    glGpuSetBlendMode(base, bm_normal);
+    drawQuad();
 
     // Pixel reads must use GML's top-left origin, preserve alpha, and leave
     // independent read/draw framebuffer bindings and pack alignment intact.

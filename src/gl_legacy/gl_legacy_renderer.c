@@ -103,6 +103,11 @@ static void glInit(Renderer* renderer, DataWin* dataWin) {
     // Prepare texture slots for lazy loading (PNG decode deferred to first use)
     glEnable(GL_TEXTURE_2D);
     glDisable(GL_DEPTH_TEST);
+    // GML alpha testing starts disabled, with a zero reference. OpenGL's
+    // default comparison is ALWAYS: enabling it without setting a reference
+    // would let transparent texels erase destination-alpha masks.
+    glDisable(GL_ALPHA_TEST);
+    glAlphaFunc(GL_GREATER, 0.0f);
     glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
 
 #ifdef PLATFORM_PS3
