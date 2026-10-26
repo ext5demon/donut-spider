@@ -536,6 +536,7 @@ int main(int argc, char* argv[]) {
             double currentFps = (double)fpsFrameCount / elapsedSec;
             double avgMs = (elapsedSec / (double)fpsFrameCount) * 1000.0;
             PS3SessionLog_event("PERF STATS: FPS=%.2f (avg_frame_time=%.2f ms, total_frames=%d)", currentFps, avgMs, runner->frameCount);
+            PS3SessionLog_knightState(runner);
 #ifdef DONUT_SPIDER_DEV_BUILD
             PS3SessionLog_event("PERF PHASES: step_ms=%.2f draw_ms=%.2f audio_ms=%.2f",
                 perfStepTime * 1000.0 / fpsFrameCount, perfDrawTime * 1000.0 / fpsFrameCount,

@@ -1,4 +1,9 @@
 #include "ps3_session_log.h"
+#ifdef PLATFORM_PS3
+#include "runner.h"
+#include "vm.h"
+#include "stb_ds.h"
+#endif
 
 #include <errno.h>
 #include <stdarg.h>
@@ -149,6 +154,43 @@ void PS3SessionLog_flushToDisk(void) {
         sessionFile = fopen(sessionPath, "a");
     }
 }
+
+#ifdef PLATFORM_PS3
+// Sampled with the one-second FPS report, including invisible instances. The
+// battle-to-cutscene handoff needs both actors' positions and visibility to
+// distinguish missing draws from a missing/destroyed battle actor.
+void PS3SessionLog_knightState(Runner* runner) {
+    static const DataWin* cachedData;
+    static int32_t objects[3];
+    static int32_t vars[7];
+    const char* names[]={"obj_knight_enemy","obj_ch3_PTB02_roaringknight","obj_ch3_PTB02"};
+    const char* variables[]={"con","state","endcon","end_cutscene_version","haveusedroaring","roaring_knight","customcon"};
+    if (!sessionFile || !runner) return;
+    if (cachedData != runner->dataWin) {
+        cachedData=runner->dataWin;
+        for (unsigned i=0;i<3;++i) {
+            objects[i]=-1;
+            for (uint32_t j=0;j<cachedData->objt.count;++j)
+                if (!strcmp(cachedData->objt.objects[j].name,names[i])) { objects[i]=(int32_t)j; break; }
+        }
+        for (unsigned i=0;i<7;++i) vars[i]=VM_getOrAllocateVarID(runner->vmContext,variables[i]);
+    }
+    for (unsigned i=0;i<3;++i) {
+        if (objects[i]<0) continue;
+        Instance** bucket=runner->instancesByObject[objects[i]];
+        for (ptrdiff_t j=0;j<arrlen(bucket);++j) {
+            Instance* inst=bucket[j];
+            if (!inst->active || inst->destroyed) continue;
+            double v[7];
+            for (unsigned k=0;k<7;++k) v[k]=(double)RValue_toReal(Instance_getSelfVar(inst,vars[k]));
+            PS3SessionLog_event("KNIGHT STATE frame=%d object=%s id=%d sprite=%d image=%.2f pos=(%.2f,%.2f) visible=%d alpha=%.2f con=%.2f state=%.2f endcon=%.2f end_version=%.2f used_roar=%.2f scene_knight=%.0f customcon=%.2f",
+                runner->frameCount,names[i],inst->instanceId,inst->spriteIndex,(double)inst->imageIndex,
+                (double)inst->x,(double)inst->y,inst->visible,(double)inst->imageAlpha,
+                v[0],v[1],v[2],v[3],v[4],v[5],v[6]);
+        }
+    }
+}
+#endif
 
 void PS3SessionLog_heartbeat(const char* roomName, int32_t roomIndex, int32_t frame,
                              int32_t instances, int32_t structs, size_t heapBytes,

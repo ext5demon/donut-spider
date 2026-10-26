@@ -125,6 +125,23 @@ static GLuint legacyMappedPalette(GLLegacyRenderer* gl,int32_t sourceTpag,Legacy
 }
 #endif
 
+// Fragment constants live in each private program's backing memory. Repeated
+// palette/fog values need no new inline transfers. Keep program binding and
+// draw-state submission intact, including after surface and picker draws.
+static MAYBE_UNUSED void legacySetPaletteUniforms(LegacyPaletteUniformCache* cache, GLuint program,
+    GLint paletteLoc, GLint fogLoc, float paletteV, uint32_t fogColor, bool fogEnable) {
+    if (cache->program != program) *cache = (LegacyPaletteUniformCache){.program=program};
+    if (!cache->paletteValid || cache->paletteV != paletteV) {
+        glUniform1f(paletteLoc, paletteV);
+        cache->paletteV=paletteV; cache->paletteValid=true;
+    }
+    if (!cache->fogValid || cache->fogColor != fogColor || cache->fogEnable != fogEnable) {
+        glUniform4f(fogLoc, BGR_R(fogColor)/255.f, BGR_G(fogColor)/255.f,
+            BGR_B(fogColor)/255.f, fogEnable?1.f:0.f);
+        cache->fogColor=fogColor; cache->fogEnable=fogEnable; cache->fogValid=true;
+    }
+}
+
 static void glLegacyShaderBegin(GLLegacyRenderer* gl,int32_t tpagIndex) {
     int kind=legacyShaderKind(gl,gl->shaderIndex);
     LegacyShader* state=kind?&gl->shaders[gl->shaderIndex]:NULL;
@@ -149,8 +166,10 @@ static void glLegacyShaderBegin(GLLegacyRenderer* gl,int32_t tpagIndex) {
         program=gl->colorEffectProgram;
     }
     glUseProgram(program);
-    glUniform1f(program==gPalettedProgram?gPalettedUPaletteVLoc:glGetUniformLocation(program,"uPaletteV"),paletteV);
-    glUniform4f(program==gPalettedProgram?gPalettedFogLoc:glGetUniformLocation(program,"uFogColor"),BGR_R(gl->fogColor)/255.f,BGR_G(gl->fogColor)/255.f,BGR_B(gl->fogColor)/255.f,gl->fogEnable?1.f:0.f);
+    legacySetPaletteUniforms(&gl->paletteUniforms[program==gPalettedProgram?0:1], program,
+        program==gPalettedProgram?gPalettedUPaletteVLoc:glGetUniformLocation(program,"uPaletteV"),
+        program==gPalettedProgram?gPalettedFogLoc:glGetUniformLocation(program,"uFogColor"),
+        paletteV,gl->fogColor,gl->fogEnable);
     if(kind>=2) {
         glUniform4f(glGetUniformLocation(program,"uEffect"),indexed?1.f:0.f,(float)(kind-1),state->hue,0);
         if(kind==5) {

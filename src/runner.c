@@ -20,6 +20,9 @@
 #include "debug_overlay.h"
 #include "gettime.h"
 #include "stb_ds.h"
+#ifdef PLATFORM_PS3
+#include "ps3_session_log.h"
+#endif
 
 // ===[ Runtime Layer Teardown Helpers ]===
 void Runner_freeRuntimeLayer(RuntimeLayer* runtimeLayer) {
@@ -2358,6 +2361,14 @@ void Runner_destroyInstance(MAYBE_UNUSED Runner* runner, Instance* inst, bool ru
     // We check this to avoid a infinite loop if "inst" is destroyed within a event destroy event
     if (inst->destroyed)
         return;
+#ifdef PLATFORM_PS3
+    const char* name=inst->objectIndex>=0 && (uint32_t)inst->objectIndex<runner->dataWin->objt.count
+        ? runner->dataWin->objt.objects[inst->objectIndex].name : "";
+    if (!strcmp(name,"obj_knight_enemy") || !strcmp(name,"obj_ch3_PTB02_roaringknight"))
+        PS3SessionLog_event("KNIGHT DESTROY frame=%d object=%s id=%d pos=(%.2f,%.2f) code=%s",
+            runner->frameCount,name,inst->instanceId,(double)inst->x,(double)inst->y,
+            runner->vmContext->currentCodeName ? runner->vmContext->currentCodeName : "<runner>");
+#endif
     inst->destroyed = true;
     if (runDestroyEvent)
         Runner_executeEvent(runner, inst, EVENT_DESTROY, 0);

@@ -2,6 +2,16 @@
 #include <GLFW/glfw3.h>
 #include <assert.h>
 
+static PFNGLUNIFORM1FPROC realUniform1f;
+static PFNGLUNIFORM4FPROC realUniform4f;
+static unsigned paletteWrites, fogWrites;
+static void APIENTRY countUniform1f(GLint loc, GLfloat value) {
+    ++paletteWrites; realUniform1f(loc, value);
+}
+static void APIENTRY countUniform4f(GLint loc, GLfloat a, GLfloat b, GLfloat c, GLfloat d) {
+    ++fogWrites; realUniform4f(loc, a, b, c, d);
+}
+
 // This fixture installs GPU textures itself. Asset loading must stay unused.
 void DataWin_loadTxtrIfNeeded(DataWin* dw,uint32_t id){(void)dw;(void)id;assert(!"unexpected asset load");}
 bool DataWin_isVersionAtLeast(const DataWin* dw,uint32_t a,uint32_t b,uint32_t c,uint32_t d){(void)dw;(void)a;(void)b;(void)c;(void)d;return true;}
@@ -149,6 +159,37 @@ int main(void) {
     glLegacyShaderBegin(&renderer,-1);drawQuad();glLegacyShaderEnd();glReadPixels(1,1,1,1,GL_RGBA,GL_UNSIGNED_BYTE,pixel);
     assert(abs((int)pixel[0]-62)<=1&&pixel[0]==pixel[1]&&pixel[1]==pixel[2]&&pixel[3]==64);
     glGpuResetShader(base);assert(base->currentShader==-1&&glGetError()==GL_NO_ERROR);
+    // Exercise the PS3 palette-state helper on real GL uniforms/pixels. Its
+    // private fragment constants survive switching through the default program.
+    GLuint cv=glCreateShader(GL_VERTEX_SHADER),cf=glCreateShader(GL_FRAGMENT_SHADER);
+    const char* cvs="#version 120\nvoid main(){gl_Position=gl_Vertex;}";
+    const char* cfs="#version 120\nuniform float uPaletteV;uniform vec4 uFogColor;void main(){gl_FragColor=vec4(uPaletteV,uFogColor.g,uFogColor.b,uFogColor.a);}";
+    glShaderSource(cv,1,&cvs,NULL);glCompileShader(cv);
+    glShaderSource(cf,1,&cfs,NULL);glCompileShader(cf);
+    LegacyPaletteUniformCache uniformCache={0};
+    realUniform1f=glad_glUniform1f;realUniform4f=glad_glUniform4f;
+    glad_glUniform1f=countUniform1f;glad_glUniform4f=countUniform4f;
+    for(int programIndex=0;programIndex<2;++programIndex) {
+        GLuint cp=glCreateProgram();glAttachShader(cp,cv);glAttachShader(cp,cf);glLinkProgram(cp);
+        GLint linked;glGetProgramiv(cp,GL_LINK_STATUS,&linked);assert(linked);
+        GLint pl=glGetUniformLocation(cp,"uPaletteV"),fl=glGetUniformLocation(cp,"uFogColor");
+        unsigned pBefore=paletteWrites,fBefore=fogWrites;
+        for(int i=0;i<1000;++i) {
+            glUseProgram(cp);legacySetPaletteUniforms(&uniformCache,cp,pl,fl,.25f,0x804020,true);
+            glUseProgram(0);
+        }
+        assert(paletteWrites==pBefore+1 && fogWrites==fBefore+1);
+        glUseProgram(cp);drawQuad();glReadPixels(1,1,1,1,GL_RGBA,GL_UNSIGNED_BYTE,pixel);
+        assert(abs((int)pixel[0]-64)<=1&&abs((int)pixel[1]-64)<=1&&pixel[2]==128&&pixel[3]==255);
+        legacySetPaletteUniforms(&uniformCache,cp,pl,fl,.75f,0xFF8000,false);
+        drawQuad();glReadPixels(1,1,1,1,GL_RGBA,GL_UNSIGNED_BYTE,pixel);
+        assert(abs((int)pixel[0]-191)<=1&&pixel[1]==128&&pixel[2]==255&&pixel[3]==0);
+        assert(paletteWrites==pBefore+2 && fogWrites==fBefore+2);
+        glUseProgram(0);glDeleteProgram(cp);
+    }
+    glad_glUniform1f=realUniform1f;glad_glUniform4f=realUniform4f;
+    glDeleteShader(cv);glDeleteShader(cf);
+    puts("PASS: 1000 repeated palette/fog requests use two uniform updates; changed values and program switches preserve pixels");
     for(int i=0;i<3;++i)glDeleteProgram(shaderStates[i].program);
     glDeleteFramebuffers(1, &fbo); glDeleteTextures(1, &sprite); glDeleteTextures(1, &target);
     glfwDestroyWindow(window); glfwTerminate();

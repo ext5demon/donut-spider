@@ -27,6 +27,13 @@ typedef struct {
     uint64_t used;
 } LegacyPaletteCache;
 typedef struct {
+    GLuint program;
+    bool paletteValid, fogValid;
+    float paletteV;
+    uint32_t fogColor;
+    bool fogEnable;
+} LegacyPaletteUniformCache;
+typedef struct {
     Renderer base; // Must be first field for struct embedding
 
     GLuint* glTextures;       // one GL texture per TXTR page
@@ -50,6 +57,7 @@ typedef struct {
     uint64_t paletteClock;
     GLuint colorEffectProgram;
     GLuint colorEffectShader;
+    LegacyPaletteUniformCache paletteUniforms[2];
 
     int32_t windowW; // stored from beginFrame for endFrame blit
     int32_t windowH;
