@@ -25,7 +25,9 @@ uint64_t nowNanos(void) {
     uint64_t rem = t % clk;
     return sec * 1000000000 + (rem * 1000000000) / clk;
 #elif defined(PLATFORM_PS3)
-    return ((double)__builtin_ppc_get_timebase()/(double)sysGetTimebaseFrequency());
+    const uint64_t ticks=__builtin_ppc_get_timebase();
+    const uint64_t frequency=sysGetTimebaseFrequency();
+    return (ticks/frequency)*1000000000ULL + (ticks%frequency)*1000000000ULL/frequency;
 #elif defined(_WIN32)
     static uint64_t freq = 0;
     if (freq == 0) {

@@ -31,11 +31,24 @@ static Uint32 phaseTick;
 
 void PS3SessionLog_phase(const char* phase, int32_t roomIndex, int32_t frame) {
     SDL_AtomicLock(&phaseLock);
+    const char* previous = currentPhase;
+    int32_t previousRoom = phaseRoom, previousFrame = phaseFrame;
+    Uint32 elapsed = SDL_GetTicks() - phaseTick;
     currentPhase = phase;
     phaseRoom = roomIndex;
     phaseFrame = frame;
     phaseTick = SDL_GetTicks();
     SDL_AtomicUnlock(&phaseLock);
+    // The watchdog catches hangs; completed phases also expose brief battle
+    // pauses that finish well before its ten-second threshold. Exclude normal
+    // frame pacing and startup work, and keep disk writes off ordinary frames.
+    if (previous && previousFrame > 0 && elapsed >= 250 &&
+        (!strcmp(previous, "step") || !strcmp(previous, "audio") ||
+         !strcmp(previous, "draw") || !strcmp(previous, "swap") ||
+         !strcmp(previous, "room transition"))) {
+        PS3SessionLog_event("SLOW PHASE: phase=%s room_index=%d frame=%d elapsed_ms=%u",
+                            previous, previousRoom, previousFrame, elapsed);
+    }
 }
 
 static int watchProgress(void* unused) {

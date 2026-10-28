@@ -18,6 +18,7 @@ static float hardwareScale[4], hardwareOffset[4];
 static unsigned viewportCalls, textureCalls, clears, draws, liveAllocations;
 static unsigned readbackCalls;
 static unsigned vertexProgramLoads,fragmentProgramLoads,scalarUniformWrites;
+static unsigned fragmentUniformWrites;
 static u32 hardwareColorMask,hardwareDepthWrite;
 static bool pickerRecording,modelUploaded,projectionUploaded;
 static unsigned pickerTextured,pickerSolid;
@@ -33,7 +34,7 @@ void rsxSetVertexProgramParameter(gcmContextData* ctx,rsxVertexProgram* program,
 }
 void rsxLoadFragmentProgramLocation(gcmContextData* ctx,rsxFragmentProgram* program,u32 offset,u8 location){(void)ctx;(void)program;(void)offset;(void)location;++fragmentProgramLoads;}
 void rsxInlineTransfer(gcmContextData* ctx,u32 offset,const void* value,u32 count,u32 location){
-    (void)ctx;(void)location;if(count==1)++scalarUniformWrites;
+    (void)ctx;(void)location;++fragmentUniformWrites;if(count==1)++scalarUniformWrites;
     if(offset==fp_offset+PS3GL_Uniform_TextureEnabled*16 && count==1){float f;memcpy(&f,value,4);hardwareTextureEnabled=swapF32_16(f)!=0;}
 }
 static unsigned char readbackScratch[PS3GL_READBACK_CAPACITY];
@@ -170,9 +171,15 @@ int main(void) {
     glDisable(GL_SCISSOR_TEST);glViewport(0,0,640,480);quad();
     unsigned cachedViewport=viewportCalls,cachedTextures=textureCalls;
     unsigned cachedVp=vertexProgramLoads,cachedFp=fragmentProgramLoads;
+    unsigned cachedUniforms=fragmentUniformWrites;
     for(unsigned i=0;i<1000;++i)quad();
     assert(viewportCalls==cachedViewport+1000&&textureCalls==cachedTextures+1000);
     assert(vertexProgramLoads==cachedVp+1000&&fragmentProgramLoads==cachedFp+1000);
+    assert(fragmentUniformWrites==cachedUniforms);
+    float fog[]={.2f,.3f,.4f,1};glFogfv(GL_FOG_COLOR,fog);glEnable(GL_FOG);quad();
+    assert(fragmentUniformWrites==cachedUniforms+2);
+    quad();assert(fragmentUniformWrites==cachedUniforms+2);
+    glDisable(GL_FOG);quad();assert(fragmentUniformWrites==cachedUniforms+3);
     glDepthMask(true);glColorMask(1,1,1,1);quad();
     u32 fullMask=hardwareColorMask;
     glDepthMask(false);glColorMask(0,0,0,0);glScissor(2,3,4,5);glEnable(GL_SCISSOR_TEST);

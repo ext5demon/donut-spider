@@ -11,6 +11,7 @@ static int legacyShaderKind(GLLegacyRenderer* gl,int32_t index) {
     if(!strcmp(shader->name,"shd_luminosity_to_transparency"))return 4;
     if(!strcmp(shader->name,"shd_grayscalesand")||!strcmp(shader->name,"shd_grayscalesand_tolerance"))return 5;
     if(!strcmp(shader->name,"shd_tone"))return 6;
+    if(!strcmp(shader->name,"shd_ripple"))return 7;
     return 0;
 }
 
@@ -58,10 +59,11 @@ static void glGpuResetShader(Renderer* renderer) {
 static int32_t glShaderGetUniform(Renderer* renderer,int32_t index,char* name) {
     if(!name||!glShaderIsCompiled(renderer,index))return -1;
     const char* names[]={"u_Uvs","u_paletteId","u_pixelSize","u_Position",
-        "sand1","sand2","sand3","sand4","sandcol","saturation","brightness","tone_factor","tone_dark","tone_light"};
+        "sand1","sand2","sand3","sand4","sandcol","saturation","brightness","tone_factor","tone_dark","tone_light",
+        "rippleCenter","rippleRad"};
     int kind=legacyShaderKind((GLLegacyRenderer*)renderer,index);
-    for(int i=0;i<14;++i)if(!strcmp(name,names[i])&&((kind==1&&i<3)||(kind==2&&i==3)||
-        (kind==5&&i>=4&&i<=8)||(kind==6&&i>=9)))return index*16+i;
+    for(int i=0;i<16;++i)if(!strcmp(name,names[i])&&((kind==1&&i<3)||(kind==2&&i==3)||
+        (kind==5&&i>=4&&i<=8)||(kind==6&&i>=9&&i<14)||(kind==7&&i>=14)))return index*16+i;
     return -1;
 }
 static int32_t glShaderGetSamplerIndex(Renderer* renderer,int32_t index,char* name) {
@@ -76,7 +78,7 @@ static void glShaderSetUniformF(Renderer* renderer,int32_t handle,int32_t count,
     else if(slot==1&&count==1)state->paletteId=a;
     else if(slot==2&&count==2){state->pixelSize[0]=a;state->pixelSize[1]=b;}
     else if(slot==3&&count==1)state->hue=a;
-    else if(slot>=4&&slot<14){float values[]={a,b,c,d};memcpy(state->colorUniforms[slot],values,sizeof(values));}
+    else if(slot>=4&&slot<16){float values[]={a,b,c,d};memcpy(state->colorUniforms[slot],values,sizeof(values));}
 }
 static void glShaderSetUniformFArray(Renderer* renderer,int32_t handle,float* values,uint32_t count) {
     if(values&&count&&count<=4)glShaderSetUniformF(renderer,handle,count,values[0],count>1?values[1]:0,count>2?values[2]:0,count>3?values[3]:0);
@@ -180,6 +182,10 @@ static void glLegacyShaderBegin(GLLegacyRenderer* gl,int32_t tpagIndex) {
             float* dark=state->colorUniforms[12];float* light=state->colorUniforms[13];
             glUniform4f(glGetUniformLocation(program,"uToneDark"),dark[0],dark[1],dark[2],0);
             glUniform4f(glGetUniformLocation(program,"uToneLight"),light[0],light[1],light[2],0);
+        } else if(kind==7) {
+            float* center=state->colorUniforms[14];float* radius=state->colorUniforms[15];
+            glUniform4f(glGetUniformLocation(program,"uRippleCenter"),center[0],center[1],0,0);
+            glUniform4f(glGetUniformLocation(program,"uRippleRadius"),radius[0],radius[1],radius[2],0);
         }
     }
 #else
@@ -199,6 +205,11 @@ static void glLegacyShaderBegin(GLLegacyRenderer* gl,int32_t tpagIndex) {
         glUniform2fv(glGetUniformLocation(state->program,"u_pixelSize"),1,state->pixelSize);
         glUniform1f(glGetUniformLocation(state->program,"u_paletteId"),state->paletteId);
     } else if(kind==2)glUniform1f(glGetUniformLocation(state->program,"u_Position"),state->hue);
+    else if(kind==7) {
+        float* center=state->colorUniforms[14];float* radius=state->colorUniforms[15];
+        glUniform2f(glGetUniformLocation(state->program,"rippleCenter"),center[0],center[1]);
+        glUniform3f(glGetUniformLocation(state->program,"rippleRad"),radius[0],radius[1],radius[2]);
+    }
     else if(kind==5||kind==6) {
         const char* names[]={"sand1","sand2","sand3","sand4","sandcol","saturation","brightness","tone_factor","tone_dark","tone_light"};
         for(int i=0;i<10;++i) {

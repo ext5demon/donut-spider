@@ -17,7 +17,7 @@ typedef struct {
     GLuint program;
     bool attempted, compiled;
     float uvs[4], pixelSize[2], paletteId, hue;
-    float colorUniforms[14][4];
+    float colorUniforms[16][4];
 } LegacyShader;
 typedef struct {
     int32_t paletteTpag;

@@ -136,12 +136,13 @@ int main(void) {
         assert(pixels[(y*4+x)*4+3]==((x<2 && y>=2)?255:0));
     // Tenna's rings are a brightness-derived shadow mask, not white circles.
     // Exercise the legacy backend's real shader selection and draw activation.
-    Shader shaderDefs[3]={
+    Shader shaderDefs[4]={
         {.present=true,.name="shd_luminosity_to_transparency",.glsl_Fragment="#version 120\nuniform sampler2D gm_BaseTexture;varying vec2 v_vTexcoord;varying vec4 v_vColour;void main(){vec4 s=texture2D(gm_BaseTexture,v_vTexcoord);gl_FragColor=vec4(0,0,0,(1-dot(s.rgb,vec3(1.0/3.0)))*s.a*v_vColour.a);}"},
         {.present=true,.name="shd_grayscalesand",.glsl_Fragment="#version 120\nuniform sampler2D gm_BaseTexture;uniform vec3 sand1,sand2,sand3,sand4,sandcol;varying vec2 v_vTexcoord;void main(){vec4 s=texture2D(gm_BaseTexture,v_vTexcoord);vec3 c=vec3(dot(s.rgb,vec3(.3,.59,.11)));vec3 b=floor(s.rgb*255.0+.001);if(distance(b,sand1)<.004||distance(b,sand2)<.004||distance(b,sand3)<.004||distance(b,sand4)<.004)c=sandcol;gl_FragColor=vec4(c,s.a);}"},
-        {.present=true,.name="shd_tone",.glsl_Fragment="#version 120\nuniform sampler2D gm_BaseTexture;uniform float saturation,brightness,tone_factor;uniform vec3 tone_dark,tone_light;varying vec2 v_vTexcoord;void main(){vec4 s=texture2D(gm_BaseTexture,v_vTexcoord);float l=dot(s.rgb,vec3(.3,.59,.11));gl_FragColor=vec4(mix(vec3(l),s.rgb,saturation)*mix(vec3(1),mix(tone_dark,tone_light,l),tone_factor)*brightness,s.a);}"}
+        {.present=true,.name="shd_tone",.glsl_Fragment="#version 120\nuniform sampler2D gm_BaseTexture;uniform float saturation,brightness,tone_factor;uniform vec3 tone_dark,tone_light;varying vec2 v_vTexcoord;void main(){vec4 s=texture2D(gm_BaseTexture,v_vTexcoord);float l=dot(s.rgb,vec3(.3,.59,.11));gl_FragColor=vec4(mix(vec3(l),s.rgb,saturation)*mix(vec3(1),mix(tone_dark,tone_light,l),tone_factor)*brightness,s.a);}"},
+        {.present=true,.name="shd_ripple",.glsl_Fragment="#version 120\nuniform vec2 rippleCenter;uniform vec3 rippleRad;void main(){float d=length(gl_FragCoord.xy-rippleCenter);float e=max(0.,d-rippleRad.x+rippleRad.z);float a=d/rippleRad.x;if(e>0.)a=.6;if(e>rippleRad.z/3.)a=.8;if(e>rippleRad.z*2./3.)a=1.;gl_FragColor=vec4(1.,1.,1.,d>rippleRad.x?0.:min(e,1.)*a*min(1.,1.-(rippleRad.x-rippleRad.y/3.)/(rippleRad.y*2./3.)));}"}
     };
-    DataWin data={.shdr={.count=3,.shaders=shaderDefs}};LegacyShader shaderStates[3]={0};
+    DataWin data={.shdr={.count=4,.shaders=shaderDefs}};LegacyShader shaderStates[4]={0};
     renderer.base.dataWin=&data;renderer.shaders=shaderStates;renderer.shaderIndex=-1;
     glMatrixMode(GL_PROJECTION);glLoadIdentity();glMatrixMode(GL_MODELVIEW);glLoadIdentity();
     glEnable(GL_TEXTURE_2D);glDisable(GL_BLEND);glBindTexture(GL_TEXTURE_2D,sprite);glColor4f(1,1,1,.5f);
@@ -159,6 +160,41 @@ int main(void) {
     glLegacyShaderBegin(&renderer,-1);drawQuad();glLegacyShaderEnd();glReadPixels(1,1,1,1,GL_RGBA,GL_UNSIGNED_BYTE,pixel);
     assert(abs((int)pixel[0]-62)<=1&&pixel[0]==pixel[1]&&pixel[1]==pixel[2]&&pixel[3]==64);
     glGpuResetShader(base);assert(base->currentShader==-1&&glGetError()==GL_NO_ERROR);
+    // A rectangular draw must become a circular band, with a transparent
+    // center/corners and a partially faded rim. Exercise real uniform binding.
+    glGpuSetShader(base,3);assert(base->currentShader==3);
+    int center=glShaderGetUniform(base,3,"rippleCenter"),radius=glShaderGetUniform(base,3,"rippleRad");
+    assert(center>=0&&radius>=0&&glShaderGetUniform(base,2,"rippleRad")==-1);
+    glShaderSetUniformF(base,center,2,2,2,0,0);glShaderSetUniformF(base,radius,3,1.8f,3,.8f,0);
+    glLegacyShaderBegin(&renderer,-1);drawQuad();glLegacyShaderEnd();
+    glReadPixels(0,0,1,1,GL_RGBA,GL_UNSIGNED_BYTE,pixel);assert(pixel[3]==0);
+    glReadPixels(1,1,1,1,GL_RGBA,GL_UNSIGNED_BYTE,pixel);assert(pixel[3]==0);
+    glReadPixels(2,0,1,1,GL_RGBA,GL_UNSIGNED_BYTE,pixel);assert(abs((int)pixel[3]-89)<=1);
+    glGpuResetShader(base);
+    // Chapter 4's dust layer tiles a particle surface before masking it with
+    // window beams. Verify offset, tint/alpha and both signs of scale.
+    GLuint tiled;glGenTextures(1,&tiled);glBindTexture(GL_TEXTURE_2D,tiled);
+    unsigned char tilePixels[]={255,0,0,255, 0,255,0,255, 0,0,255,255, 255,255,255,255};
+    glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA,2,2,0,GL_RGBA,GL_UNSIGNED_BYTE,tilePixels);
+    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_REPEAT);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_REPEAT);
+    GLuint surfaceIds[]={fbo},surfaceTextures[]={tiled};int32_t surfaceWidths[]={2},surfaceHeights[]={2};
+    renderer.surfaceCount=1;renderer.surfaces=surfaceIds;renderer.surfaceTexture=surfaceTextures;
+    renderer.surfaceWidth=surfaceWidths;renderer.surfaceHeight=surfaceHeights;
+    glMatrixMode(GL_PROJECTION);glLoadIdentity();glOrtho(0,4,4,0,-1,1);
+    for(int flipped=0;flipped<2;++flipped){
+        glClearColor(0,0,0,0);glClear(GL_COLOR_BUFFER_BIT);
+        glLegacyDrawSurfaceTiled(base,0,-1,-1,flipped?-1:1,1,4,4,0xFFFFFF,.5f);
+        glReadPixels(0,0,4,4,GL_RGBA,GL_UNSIGNED_BYTE,pixels);
+        for(int y=0;y<4;++y)for(int x=0;x<4;++x){
+            int sx=flipped?(x%2):((x+1)%2),sy=(4-y)%2;
+            unsigned char* actual=pixels+(y*4+x)*4;unsigned char* expected=tilePixels+(sy*2+sx)*4;
+            assert(!memcmp(actual,expected,3)&&abs((int)actual[3]-128)<=1);
+        }
+    }
+    glDeleteTextures(1,&tiled);renderer.surfaceCount=0;
+    glMatrixMode(GL_PROJECTION);glLoadIdentity();
+    puts("PASS: ripple uniforms produce circular fading rings; tiled particle surfaces preserve pixels and mirrored offsets");
     // Exercise the PS3 palette-state helper on real GL uniforms/pixels. Its
     // private fragment constants survive switching through the default program.
     GLuint cv=glCreateShader(GL_VERTEX_SHADER),cf=glCreateShader(GL_FRAGMENT_SHADER);
@@ -190,7 +226,7 @@ int main(void) {
     glad_glUniform1f=realUniform1f;glad_glUniform4f=realUniform4f;
     glDeleteShader(cv);glDeleteShader(cf);
     puts("PASS: 1000 repeated palette/fog requests use two uniform updates; changed values and program switches preserve pixels");
-    for(int i=0;i<3;++i)glDeleteProgram(shaderStates[i].program);
+    for(int i=0;i<4;++i)glDeleteProgram(shaderStates[i].program);
     glDeleteFramebuffers(1, &fbo); glDeleteTextures(1, &sprite); glDeleteTextures(1, &target);
     glfwDestroyWindow(window); glfwTerminate();
     puts("PASS: fog/alpha, blend round-trip, pixel readback orientation/bounds/state");

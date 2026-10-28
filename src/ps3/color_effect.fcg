@@ -1,11 +1,28 @@
 // DELTARUNE's YIQ hue rotation and grayscale, on indexed or RGBA sources.
-void main(float4 color:COLOR0,float2 uv:TEXCOORD0,
+void main(float4 color:COLOR0,float2 uv:TEXCOORD0,float2 pixel:WPOS,
           uniform sampler2D uIndex:TEXUNIT0,uniform sampler2D uPalette:TEXUNIT1,
           uniform float uPaletteV,uniform float4 uEffect,
           uniform float4 uSand1,uniform float4 uSand2,uniform float4 uSand3,
           uniform float4 uSand4,uniform float4 uSandColor,
           uniform float4 uTone,uniform float4 uToneDark,uniform float4 uToneLight,
+          uniform float4 uRippleCenter,uniform float4 uRippleRadius,
           out float4 result) {
+    // Sanctuary pulses shade a rectangle into a fading circular band. RSX
+    // surface pixel coordinates and the game's center both use top-down Y.
+    if(uEffect.y>5.5) {
+        float radius=uRippleRadius.x,limit=uRippleRadius.y,thickness=uRippleRadius.z;
+        float distanceFromCenter=length(pixel-uRippleCenter.xy);
+        float edge=max(0,distanceFromCenter-radius+thickness);
+        float rim=thickness/3;
+        float brightness=distanceFromCenter/max(radius,.0001);
+        if(edge>0)brightness=.6;
+        if(edge>rim)brightness=.8;
+        if(edge>2*rim)brightness=1;
+        float fadeStart=limit/3;
+        float fade=saturate(1-(radius-fadeStart)/max(limit-fadeStart,.0001));
+        result=float4(color.rgb,distanceFromCenter<=radius ? min(edge,1)*brightness*fade : 0);
+        return;
+    }
     float4 base=tex2D(uIndex,uv);
     if(uEffect.x>.5)base=tex2D(uPalette,float2(base.r*(255.0/256.0)+.5/256.0,uPaletteV));
     result=base*color;

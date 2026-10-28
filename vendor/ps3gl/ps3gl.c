@@ -1846,6 +1846,16 @@ static void _ps3gl_setup_scissor(void) {
     lastSubmittedScissor = r;
 }
 
+// The fixed-function fragment program owns persistent constant memory just
+// like custom programs. Cache only those constants, never RSX draw/program
+// state: surface changes still need the complete submission below.
+static struct {
+    bool valid,textureEnabled,fogEnabled;
+    float textureMode,fogColor[4];
+    rsxFragmentProgram* program;
+    u32 offset;
+} ffpUniformCache;
+
 void _setup_draw_env(void) {
     extern bool gPS3GL_DebugLogEnabled; if (gPS3GL_DebugLogEnabled) {
         PS3SessionLog_event("DRAW_ENV START");
@@ -2013,10 +2023,27 @@ void _setup_draw_env(void) {
 		}
 		
 		// FFP FP: push its baked uniforms.
-		rsxSetFragmentProgramParameterBool(context, useFpo, _opengl_state.prog_consts[PS3GL_Uniform_TextureEnabled], hardware_tex_enabled, useFpOffset, GCM_LOCATION_RSX);
-		rsxSetFragmentProgramParameterBool(context, useFpo, _opengl_state.prog_consts[PS3GL_Uniform_FogEnabled], _opengl_state.fog_enabled, useFpOffset, GCM_LOCATION_RSX);
-		rsxSetFragmentProgramParameterF32(context, useFpo, _opengl_state.prog_consts[PS3GL_Uniform_TextureMode], _opengl_state.texEnvMode, useFpOffset, GCM_LOCATION_RSX);
-		rsxSetFragmentProgramParameterF32Vec4(context, useFpo, _opengl_state.prog_consts[PS3GL_Uniform_FogColor],  _opengl_state.fog_color, useFpOffset, GCM_LOCATION_RSX);
+        if(ffpUniformCache.program!=useFpo || ffpUniformCache.offset!=useFpOffset) {
+            memset(&ffpUniformCache,0,sizeof(ffpUniformCache));
+            ffpUniformCache.program=useFpo;ffpUniformCache.offset=useFpOffset;
+        }
+        if(!ffpUniformCache.valid || ffpUniformCache.textureEnabled!=hardware_tex_enabled) {
+            rsxSetFragmentProgramParameterBool(context,useFpo,_opengl_state.prog_consts[PS3GL_Uniform_TextureEnabled],hardware_tex_enabled,useFpOffset,GCM_LOCATION_RSX);
+            ffpUniformCache.textureEnabled=hardware_tex_enabled;
+        }
+        if(!ffpUniformCache.valid || ffpUniformCache.fogEnabled!=_opengl_state.fog_enabled) {
+            rsxSetFragmentProgramParameterBool(context,useFpo,_opengl_state.prog_consts[PS3GL_Uniform_FogEnabled],_opengl_state.fog_enabled,useFpOffset,GCM_LOCATION_RSX);
+            ffpUniformCache.fogEnabled=_opengl_state.fog_enabled;
+        }
+        if(!ffpUniformCache.valid || ffpUniformCache.textureMode!=_opengl_state.texEnvMode) {
+            rsxSetFragmentProgramParameterF32(context,useFpo,_opengl_state.prog_consts[PS3GL_Uniform_TextureMode],_opengl_state.texEnvMode,useFpOffset,GCM_LOCATION_RSX);
+            ffpUniformCache.textureMode=_opengl_state.texEnvMode;
+        }
+        if(!ffpUniformCache.valid || memcmp(ffpUniformCache.fogColor,_opengl_state.fog_color,sizeof(ffpUniformCache.fogColor))) {
+            rsxSetFragmentProgramParameterF32Vec4(context,useFpo,_opengl_state.prog_consts[PS3GL_Uniform_FogColor],_opengl_state.fog_color,useFpOffset,GCM_LOCATION_RSX);
+            memcpy(ffpUniformCache.fogColor,_opengl_state.fog_color,sizeof(ffpUniformCache.fogColor));
+        }
+        ffpUniformCache.valid=true;
 	}
 
 	extern bool gPS3GL_DebugLogEnabled; if (gPS3GL_DebugLogEnabled) {
@@ -2028,6 +2055,7 @@ void _setup_draw_env(void) {
 // Also move rsxutil.c functionality over to here
 void ps3glInit(void)
 {
+	memset(&ffpUniformCache,0,sizeof(ffpUniformCache));
 	atexit(_program_exit_callback);
 	void *host_addr = memalign(1024*1024,HOST_SIZE);
 	init_screen(host_addr,HOST_SIZE);

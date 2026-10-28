@@ -12,6 +12,12 @@ int main(void) {
     assert(PS3SessionLog_open(directory));
     PS3SessionLog_phase("step", 42, 7);
     SDL_Delay(10500);
+    PS3SessionLog_phase("audio", 42, 7);
+    PS3SessionLog_phase("draw", 42, 7);
+    SDL_Delay(300);
+    PS3SessionLog_phase("frame wait", 42, 7);
+    SDL_Delay(300);
+    PS3SessionLog_phase("step", 42, 8);
     PS3SessionLog_close("watchdog test");
     char output[8192] = {0};
     const char* path = PS3SessionLog_path();
@@ -20,10 +26,14 @@ int main(void) {
     fclose(log);
     const char* stall = strstr(output, "RUNNER STALL: phase=step room_index=42 frame=7");
     assert(stall && !strstr(stall + 1, "RUNNER STALL:"));
+    assert(strstr(output, "SLOW PHASE: phase=step room_index=42 frame=7"));
+    assert(strstr(output, "SLOW PHASE: phase=draw room_index=42 frame=7"));
+    assert(!strstr(output, "SLOW PHASE: phase=audio"));
+    assert(!strstr(output, "SLOW PHASE: phase=frame wait"));
     assert(strstr(output, "SESSION END reason=watchdog test"));
     unlink(path);
     char logs[256]; snprintf(logs, sizeof(logs), "%s/logs", directory);
     rmdir(logs); rmdir(directory);
-    puts("PASS: stalled phase is recorded once and watchdog joins on shutdown");
+    puts("PASS: stalls and completed slow phases are recorded; ordinary audio and frame waits are excluded; watchdog joins on shutdown");
     return 0;
 }

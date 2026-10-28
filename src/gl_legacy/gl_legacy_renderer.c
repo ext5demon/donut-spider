@@ -1957,8 +1957,32 @@ static bool resolveSurfaceTexture(GLLegacyRenderer* gl, int32_t surfaceId, GLuin
     return true;
 }
 
-static void glLegacyDrawSurfaceTiled(MAYBE_UNUSED Renderer* renderer, MAYBE_UNUSED int32_t surfaceID, MAYBE_UNUSED float x, MAYBE_UNUSED float y, MAYBE_UNUSED float xscale, MAYBE_UNUSED float yscale, MAYBE_UNUSED float roomW, MAYBE_UNUSED float roomH, MAYBE_UNUSED uint32_t color, MAYBE_UNUSED float alpha) {
-    // No-op
+static void glLegacyDrawSurfaceTiled(Renderer* renderer, int32_t surfaceID, float x, float y,
+    float xscale, float yscale, float roomW, float roomH, uint32_t color, float alpha) {
+    GLLegacyRenderer* gl=(GLLegacyRenderer*)renderer;
+    GLuint texture;int32_t width,height;
+    if(!resolveSurfaceTexture(gl,surfaceID,&texture,&width,&height)||width<=0||height<=0||
+       xscale==0||yscale==0||roomW<=0||roomH<=0)return;
+    float tileW=width*fabsf(xscale),tileH=height*fabsf(yscale);
+    float left=fmodf(x,tileW),top=fmodf(y,tileH);
+    if(left>0)left-=tileW;
+    if(top>0)top-=tileH;
+    float right=left+ceilf((roomW-left)/tileW)*tileW;
+    float bottom=top+ceilf((roomH-top)/tileH)*tileH;
+    float u0=(left-x)/(width*xscale),u1=(right-x)/(width*xscale);
+    float v0=(top-y)/(height*yscale),v1=(bottom-y)/(height*yscale);
+    // Surface textures already use REPEAT. One quad covers the same tiled
+    // extent without submitting every off-screen copy in large rooms.
+    glBindTexture(GL_TEXTURE_2D,texture);
+    PS3_PALETTED_BEGIN(-1);
+    glBegin(GL_QUADS);
+    glColor4f(BGR_R(color)/255.f,BGR_G(color)/255.f,BGR_B(color)/255.f,alpha);
+    glTexCoord2f(u0,v0);glVertex2f(left,top);
+    glTexCoord2f(u1,v0);glVertex2f(right,top);
+    glTexCoord2f(u1,v1);glVertex2f(right,bottom);
+    glTexCoord2f(u0,v1);glVertex2f(left,bottom);
+    glEnd();
+    PS3_PALETTED_END();
 }
 
 static void glLegacyDrawSurface(Renderer* renderer, int32_t surfaceId, int32_t srcLeft, int32_t srcTop, int32_t srcWidth, int32_t srcHeight, float x, float y, float xscale, float yscale, float angleDeg, uint32_t color, float alpha) {
