@@ -1,0 +1,15 @@
+<?xml version="1.0" ?>
+<sfo>
+    <value name="APP_VER" type="string">00.18</value>
+    <value name="ATTRIBUTE" type="integer">0</value>
+    <value name="BOOTABLE" type="integer">1</value>
+    <value name="CATEGORY" type="string">HG</value>
+    <value name="LICENSE" type="string">Spider Donut v0.2 Beta. Runner: MPL-2.0. DELTARUNE menu artwork, fonts and sounds belong to Toby Fox and contributors. Chapter files supplied separately by the user.</value>
+    <value name="PARENTAL_LEVEL" type="integer">0</value>
+    <value name="PS3_SYSTEM_VER" type="string">04.8000</value>
+    <value name="RESOLUTION" type="integer">63</value>
+    <value name="SOUND_FORMAT" type="integer">279</value>
+    <value name="TITLE" type="string">Spider Donut v0.2 Beta</value>
+    <value name="TITLE_ID" type="string">DONSD0001</value>
+    <value name="VERSION" type="string">00.18</value>
+</sfo>

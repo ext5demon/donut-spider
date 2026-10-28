@@ -1,24 +1,25 @@
-# Spider Donut v0.1 Beta
+# Spider Donut v0.2 Beta
 
 ![Spider Donut logo](assets/donut-spider-logo.png)
 
 Spider Donut is an experimental GameMaker bytecode runner for **PlayStation 3**,
-using the native libgcm / RSX backend. This beta builds on dev7.2, with chapter
-discovery, controller handoff, surface/readback, rendering and audio fixes
-developed through PS3 playtesting.
+using the native libgcm / RSX backend. This beta includes the Chapter 3 work
+through bdev04, alongside chapter discovery, controller handoff, surface/readback,
+rendering and audio fixes developed through PS3 playtesting.
 
-[Download v0.1](https://github.com/ext5demon/donut-spider/releases/tag/v0.1)
+[Download v0.2](https://github.com/ext5demon/donut-spider/releases/tag/v0.2)
 · [Report a bug](https://github.com/ext5demon/donut-spider/issues)
 
 ## Chapter status
 
-DELTARUNE compatibility reported by the project's playtesters for this beta:
+DELTARUNE compatibility reported by the project's playtesters for this beta.
+Fully playable means the chapter can be played through; it does not mean bug-free:
 
 | Chapter | Status |
 | --- | --- |
 | Chapter 1 | Fully playable |
 | Chapter 2 | Playable with some minor bugs |
-| Chapter 3 | Doesn't work |
+| Chapter 3 | Fully playable |
 | Chapter 4 | Bootable |
 | Chapter 5 | Doesn't work |
 
@@ -41,16 +42,16 @@ Toby Fox, 8-4, GameMaker and YoYo Games.
 
 ## Install and play
 
-1. Download `spider-donut-v0.1.pkg` from the [v0.1 release](https://github.com/ext5demon/donut-spider/releases/tag/v0.1).
+1. Download `spider-donut-v0.2.pkg` from the [v0.2 release](https://github.com/ext5demon/donut-spider/releases/tag/v0.2).
 2. Copy the PKG to a FAT32 USB drive, then install it with the PS3's Package Manager.
 3. Prepare your chapter folders as described below and copy them to USB or internal storage.
-4. Launch **Spider Donut v0.1 Beta** from the XMB. It searches mounted storage for chapters.
+4. Launch **Spider Donut v0.2 Beta** from the XMB. It searches mounted storage for chapters.
 5. Select a discovered chapter with **Cross**, then select **Play**. Use **Browse**
    to select a `data.win` manually, or **Refresh** after connecting storage.
 
 Keep your existing chapter folders and saves when upgrading a dev6/dev7 build;
 install over the app rather than deleting it. The app uses title ID **DONSD0001**
-and PS3 installer revision **00.13**, independently of the public version `v0.1`.
+and PS3 installer revision **00.18**, independently of the public version `v0.2`.
 
 ## Build TEXTURES.BIN
 
@@ -120,7 +121,7 @@ Example USB root after copying your own files:
 
 ```text
 USB_ROOT/
-  spider-donut-v0.1.pkg
+  spider-donut-v0.2.pkg
   DELTARUNE/
     mus/                         # shared music, if present in your PC copy
     chapter1_windows/
@@ -128,6 +129,10 @@ USB_ROOT/
       TEXTURES.BIN
       ...chapter assets...
     chapter2_windows/
+      data.win
+      TEXTURES.BIN
+      ...chapter assets...
+    chapter3_windows/
       data.win
       TEXTURES.BIN
       ...chapter assets...
@@ -170,7 +175,8 @@ Check logs for personal information before posting them. Do not upload
 `data.win`, texture bundles, music or saves to a public issue.
 
 Known limits include demanding scenes dropping frames or stuttering, incomplete
-shader/GML coverage, and the chapter support shown above. Enemy-dialogue clipping
+shader/GML coverage, and the chapter support shown above. Roaring Knight attack
+slowdowns and the reported missing post-defeat sprites remain open QA items. Enemy-dialogue clipping
 and the Lancer Key Item highlight discrepancy remain open PS3 QA items. Host tests
 do not establish full real-console compatibility.
 
@@ -184,13 +190,13 @@ CMake 3.21+, Ninja, Python 3 and the ps3dev packaging tools (`make_self_npdrm`,
 ```bash
 git clone https://github.com/ext5demon/donut-spider.git
 cd donut-spider
-git checkout v0.1
+git checkout v0.2
 export PS3DEV=/path/to/ps3dev
 export PSL1GHT="$PS3DEV"
 bash build.sh
 ```
 
-The script builds and finalizes `dist/spider-donut-v0.1.pkg` and a SHA-256 checksum.
+The script builds and finalizes `dist/spider-donut-v0.2.pkg` and a SHA-256 checksum.
 Set `JOBS`, `BUILD_DIR` or `OUTPUT_DIR` to override the defaults. The dev7.1 menu
 assets and embedded header are checked in; ordinary builds need no game copy,
 font download or image-generation step. To rebuild the header from those assets:

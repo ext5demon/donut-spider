@@ -10,23 +10,23 @@ mkdir -p "$build" "$out"
 build="$(cd -- "$build" && pwd)"
 out="$(cd -- "$out" && pwd)"
 commit="${SOURCE_COMMIT:-$(git -C "$repo" rev-parse --short HEAD 2>/dev/null || printf 'source-archive')}"
-date="${SOURCE_DATE:-$(git -C "$repo" log -1 --format=%cs 2>/dev/null || printf '2026-10-25')}"
+date="${SOURCE_DATE:-$(git -C "$repo" log -1 --format=%cs 2>/dev/null || printf '2026-10-28')}"
 cmake -S "$repo" -B "$build" -G Ninja \
     -DPLATFORM=ps3 -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_TOOLCHAIN_FILE="$repo/cmake/ppu.cmake" \
     -DDONUT_SPIDER_DEV_BUILD=OFF -DDONUT_SPIDER_FRAME_TRACE=OFF \
-    -DDONUT_SPIDER_DEV_PRELOAD_WAD=OFF -DENABLE_VM_STUB_LOGS=ON \
-    -DDONUT_SPIDER_VERSION=v0.1 '-DDONUT_SPIDER_DISPLAY_NAME=Spider Donut v0.1 Beta' \
+    -DDONUT_SPIDER_DEV_PRELOAD_WAD=OFF -DENABLE_VM_STUB_LOGS=ON -DENABLE_VIDEO=ON \
+    -DDONUT_SPIDER_VERSION=v0.2 '-DDONUT_SPIDER_DISPLAY_NAME=Spider Donut v0.2 Beta' \
     "-DSPIDER_DONUT_COMMIT_HASH=$commit" "-DSPIDER_DONUT_COMMIT_DATE=$date"
 cmake --build "$build" --parallel "${JOBS:-4}"
 python3 "$repo/tools/sanitize_binary_paths.py" "$build/donut-spider.elf"
 stage="$(mktemp -d "$build/package.XXXXXX")"
 mkdir -p "$stage/USRDIR"
 cp "$repo/PKG_TEMPLATE/ICON0.PNG" "$stage/ICON0.PNG"
-content_id=UP0001-DONSD0001_00-SPIDERDONUTBETA1
+content_id=UP0001-DONSD0001_00-SPIDERDONUTBETA2
 make_self_npdrm "$build/donut-spider.elf" "$stage/USRDIR/EBOOT.BIN" "$content_id"
-sfo --fromxml "$repo/packaging/v0.1.xml" "$stage/PARAM.SFO"
-pkg --contentid="$content_id" "$stage" "$out/spider-donut-v0.1.pkg"
-package_finalize "$out/spider-donut-v0.1.pkg"
-(cd "$out" && sha256sum spider-donut-v0.1.pkg > spider-donut-v0.1.pkg.sha256)
-printf 'Package: %s/spider-donut-v0.1.pkg\nStaging: %s\n' "$out" "$stage"
+sfo --fromxml "$repo/packaging/v0.2.xml" "$stage/PARAM.SFO"
+pkg --contentid="$content_id" "$stage" "$out/spider-donut-v0.2.pkg"
+package_finalize "$out/spider-donut-v0.2.pkg"
+(cd "$out" && sha256sum spider-donut-v0.2.pkg > spider-donut-v0.2.pkg.sha256)
+printf 'Package: %s/spider-donut-v0.2.pkg\nStaging: %s\n' "$out" "$stage"
