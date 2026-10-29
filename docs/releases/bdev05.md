@@ -17,6 +17,8 @@ Validation:
 - Before/after native fixtures running the owned Chapter 4 scripts: solid pulse boxes become rings, and previously absent window dust appears. These are isolated fixtures, not a full playthrough or a PS3 emulator test.
 - PS3 cross-build, package metadata/footer, exact source archive, private-file and secret audit.
 
-Install `spider-donut-bdev05.pkg` over the existing installation. Title ID remains `DONSD0001`; installer revision is `00.19`. Keep existing chapter data, texture bundles, videos and saves. The dev7.1/v0.1 preloader artwork, layout, animations and controls are unchanged. No chapter files or texture bundles are included or regenerated. The public v0.2 release remains unchanged.
+The development-logo rebuild uses the supplied Spider Donut logo for the PS3 XMB icon (`ICON0.PNG`) and background (`PIC1.PNG`). It retains the bdev05 version name and advances the installer revision to `00.20`. Game and preloader source files are identical to the original bdev05 build.
+
+Install `spider-donut-bdev05.pkg` over the existing installation. Title ID remains `DONSD0001`; installer revision is `00.20`. Keep existing chapter data, texture bundles, videos and saves. The dev7.1/v0.1 preloader artwork, layout, animations and controls are unchanged. No chapter files or texture bundles are included or regenerated. The public v0.2 release remains unchanged.
 
 Retest both Sanctuary pulse scenes, window dust, prophecy glass breaks, recruitment, Mizzle/Balthizard attacks and Gerson's parry. If a pause remains, the session log is in `/dev_hdd0/game/DONSD0001/USRDIR/logs/`. Earlier Chapter 3 changes and Knight diagnostic records are retained; this build does not claim to resolve the Knight's reported post-defeat disappearance.
