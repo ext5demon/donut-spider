@@ -174,6 +174,8 @@ static void glDestroy(Renderer* renderer) {
     for(unsigned i=0;i<renderer->dataWin->shdr.count;++i)if(gl->shaders[i].program)glDeleteProgram(gl->shaders[i].program);
     if(gl->colorEffectProgram)glDeleteProgram(gl->colorEffectProgram);
     if(gl->colorEffectShader)glDeleteShader(gl->colorEffectShader);
+    if(gl->rippleProgram)glDeleteProgram(gl->rippleProgram);
+    if(gl->rippleShader)glDeleteShader(gl->rippleShader);
     free(gl->shaders);free(gl->palettePixels);
     glDeleteTextures(1, &gl->whiteTexture);
 

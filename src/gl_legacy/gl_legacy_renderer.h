@@ -57,6 +57,7 @@ typedef struct {
     uint64_t paletteClock;
     GLuint colorEffectProgram;
     GLuint colorEffectShader;
+    GLuint rippleProgram, rippleShader;
     LegacyPaletteUniformCache paletteUniforms[2];
 
     int32_t windowW; // stored from beginFrame for endFrame blit

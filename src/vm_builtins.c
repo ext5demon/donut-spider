@@ -14046,16 +14046,12 @@ static RValue builtin_layer_element_move(VMContext* ctx, RValue* args, MAYBE_UNU
     RuntimeLayer* rl = Runner_findRuntimeLayerById(runner, layerId);
     RuntimeLayer* oldRl = nullptr;
     RuntimeLayerElement* el = Runner_findLayerElementById(runner, elementId, &oldRl);
-
-    arrput(rl->elements, *el);
-
-    size_t count = arrlenu(oldRl->elements);
-    repeat(count, i) {
-        if (&oldRl->elements[i] == el) {
-            arrdel(oldRl->elements, i);
-            break;
-        }
-    }
+    if (rl == nullptr || el == nullptr || oldRl == nullptr || rl == oldRl)
+        return RValue_makeUndefined();
+    ptrdiff_t index = el - oldRl->elements;
+    RuntimeLayerElement moved = *el;
+    arrput(rl->elements, moved);
+    arrdel(oldRl->elements, index);
 
     return RValue_makeUndefined();
 }
@@ -15071,6 +15067,11 @@ static float animcurveCatmullRom(float p0, float p1, float p2, float p3, float t
                    (-p0 + 3.0f * p1 - 3.0f * p2 + p3) * t3);
 }
 
+static float animcurveBezier(float a, float b, float c, float d, float t) {
+    float s = 1.0f - t;
+    return s*s*s*a + 3*s*s*t*b + 3*s*t*t*c + t*t*t*d;
+}
+
 static float animcurveChannelEvaluate(const AnimCurveChannel* ch, float x) {
     if (ch == nullptr || ch->pointCount == 0) return 0.0f;
     if (ch->pointCount == 1) return ch->points[0].value;
@@ -15105,7 +15106,30 @@ static float animcurveChannelEvaluate(const AnimCurveChannel* ch, float x) {
         return animcurveCatmullRom(p0, p1, p2, p3, t);
     }
 
-    // Linear (also used as fallback for bezier; full bezier handle eval not yet implemented)
+    if (ch->curveType == ANIMCURVE_TYPE_BEZIER) {
+        // GameMaker samples each cubic at iterations*2 points, then linearly
+        // interpolates between the cached X/Y pairs. Handles are relative to
+        // their knots; X is not the cubic's parameter.
+        uint32_t samples = ch->iterations ? ch->iterations : 16;
+        if (samples > 2048) samples = 2048;
+        samples *= 2;
+        uint32_t first = 0, last = samples;
+        float cx1 = a->x + a->bezierX1, cx2 = b->x + b->bezierX0;
+        while (last - first > 1) {
+            uint32_t mid = first + (last - first) / 2;
+            float sx = animcurveBezier(a->x,cx1,cx2,b->x,(float)mid/samples);
+            if (sx > x) last = mid; else first = mid;
+        }
+        float ta = (float)first/samples, tb = (float)last/samples;
+        float xa = animcurveBezier(a->x,cx1,cx2,b->x,ta);
+        float xb = animcurveBezier(a->x,cx1,cx2,b->x,tb);
+        float cy1 = a->value + a->bezierY1, cy2 = b->value + b->bezierY0;
+        float ya = animcurveBezier(a->value,cy1,cy2,b->value,ta);
+        float yb = animcurveBezier(a->value,cy1,cy2,b->value,tb);
+        return xb == xa ? ya : ya + (yb-ya)*(x-xa)/(xb-xa);
+    }
+
+    // Linear channels interpolate directly between their knots.
     return a->value + (b->value - a->value) * t;
 }
 

@@ -148,6 +148,22 @@ static void glLegacyShaderBegin(GLLegacyRenderer* gl,int32_t tpagIndex) {
     int kind=legacyShaderKind(gl,gl->shaderIndex);
     LegacyShader* state=kind?&gl->shaders[gl->shaderIndex]:NULL;
 #ifdef PLATFORM_PS3
+    if (kind == 7) {
+        // Pulses do not sample textures. Keep this hot path separate from
+        // palette, hue and tone effects so its fragments execute only the mask.
+        if (!gl->rippleProgram) {
+            extern unsigned char ripple_fpo[]; extern unsigned int ripple_fpo_len;
+            gl->rippleShader=glCreateShader(GL_FRAGMENT_SHADER);
+            glShaderBinary(1,&gl->rippleShader,PS3GL_SHADER_BINARY_FPO,ripple_fpo,ripple_fpo_len);
+            gl->rippleProgram=glCreateProgram();
+            glAttachShader(gl->rippleProgram,gl->rippleShader);glLinkProgram(gl->rippleProgram);
+        }
+        glUseProgram(gl->rippleProgram);
+        float* center=state->colorUniforms[14];float* radius=state->colorUniforms[15];
+        glUniform4f(glGetUniformLocation(gl->rippleProgram,"uRippleCenter"),center[0],center[1],0,0);
+        glUniform4f(glGetUniformLocation(gl->rippleProgram,"uRippleRadius"),radius[0],radius[1],radius[2],0);
+        return;
+    }
     float paletteV=PS3Textures_getTpagPaletteV(tpagIndex);
     bool indexed=paletteV>=0;
     GLuint palette=indexed?PS3Textures_getClutTexture():0;
@@ -182,10 +198,6 @@ static void glLegacyShaderBegin(GLLegacyRenderer* gl,int32_t tpagIndex) {
             float* dark=state->colorUniforms[12];float* light=state->colorUniforms[13];
             glUniform4f(glGetUniformLocation(program,"uToneDark"),dark[0],dark[1],dark[2],0);
             glUniform4f(glGetUniformLocation(program,"uToneLight"),light[0],light[1],light[2],0);
-        } else if(kind==7) {
-            float* center=state->colorUniforms[14];float* radius=state->colorUniforms[15];
-            glUniform4f(glGetUniformLocation(program,"uRippleCenter"),center[0],center[1],0,0);
-            glUniform4f(glGetUniformLocation(program,"uRippleRadius"),radius[0],radius[1],radius[2],0);
         }
     }
 #else

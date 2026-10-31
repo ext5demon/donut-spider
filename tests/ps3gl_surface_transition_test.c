@@ -172,10 +172,12 @@ int main(void) {
     unsigned cachedViewport=viewportCalls,cachedTextures=textureCalls;
     unsigned cachedVp=vertexProgramLoads,cachedFp=fragmentProgramLoads;
     unsigned cachedUniforms=fragmentUniformWrites;
+    unsigned countedDraws=frameDraws,countedVertices=frameVertices;
     for(unsigned i=0;i<1000;++i)quad();
     assert(viewportCalls==cachedViewport+1000&&textureCalls==cachedTextures+1000);
     assert(vertexProgramLoads==cachedVp+1000&&fragmentProgramLoads==cachedFp+1000);
     assert(fragmentUniformWrites==cachedUniforms);
+    assert(frameDraws==countedDraws+1000 && frameVertices==countedVertices+4000);
     float fog[]={.2f,.3f,.4f,1};glFogfv(GL_FOG_COLOR,fog);glEnable(GL_FOG);quad();
     assert(fragmentUniformWrites==cachedUniforms+2);
     quad();assert(fragmentUniformWrites==cachedUniforms+2);
@@ -237,6 +239,7 @@ int main(void) {
         assert(pickerTextured>texturedBefore+100&&pickerSolid>=solidBefore+14);
         assert(!_opengl_state.alpha_test_enabled&&_opengl_state.active_program==0&&_opengl_state.active_texture_unit==0);
     }
+    assert(frameDraws==0 && frameVertices==0);
     pickerRecording=false;PickerUI_deinit(&ui);
     glDeleteFramebuffers(1,&app);glDeleteTextures(1,&appTexture);
     assert(liveAllocations==0 && glGetError()==GL_NO_ERROR);

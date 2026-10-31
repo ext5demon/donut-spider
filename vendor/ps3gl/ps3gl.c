@@ -5,6 +5,7 @@
 #include <GL/glext.h>
 #include <stdint.h>
 #include <unistd.h>
+#include <SDL2/SDL_timer.h>
 // TODO: Move the rsxutil functionality into ps3glInit
 #include "rsxutil.h"
 
@@ -32,6 +33,7 @@ static struct ps3gl_opengl_state _opengl_state;
 static gcmTexture _opengl_dummy_texture;
 static GLenum ps3glError;
 static uint32_t renderTargetRevision;
+static uint32_t frameDraws, frameVertices, lastGpuReport;
 static Ps3glRasterRect lastSubmittedViewport, lastSubmittedScissor;
 static void setError(GLenum error) { if (ps3glError == GL_NO_ERROR) ps3glError = error; }
 
@@ -41,6 +43,7 @@ static inline struct ps3gl_texture* _ps3gl_active_bound_tex(void)
 }
 
 void ps3glLogGpuState(void) {
+    PS3SessionLog_event("RSX_WORK: draws=%u vertices=%u", frameDraws, frameVertices);
     struct ps3gl_framebuffer* fb = _opengl_state.bound_draw_framebuffer;
     struct ps3gl_texture* texture = _opengl_state.bound_textures[0];
     PS3SessionLog_event("RSX_STATE: draw_fbo=%u target=%ux%u program=%u texture=%u texture_size=%ux%u",
@@ -593,6 +596,7 @@ void glBegin(GLenum mode)
 		PS3SessionLog_event("glBegin called with mode %d", mode);
 	}
 	g_vert_count = 0;
+	++frameDraws;
 	_setup_draw_env();
 	rsxDrawVertexBegin(context, mode+1);
 }
@@ -619,6 +623,7 @@ uint32_t g_vpo_aTexCoord0 = GCM_VERTEX_ATTRIB_TEX0;
 
 void glVertex2f(GLfloat x, GLfloat y)
 {
+	++frameVertices;
 	g_vert_count++;
 	GLfloat v[2] = {x,y};
 	rsxDrawVertex2f(context, g_vpo_aPos, v);
@@ -626,6 +631,7 @@ void glVertex2f(GLfloat x, GLfloat y)
 
 void glVertex3f(GLfloat x, GLfloat y, GLfloat z)
 {
+	++frameVertices;
 	g_vert_count++;
 	GLfloat v[3] = {x,y,z};
 	rsxDrawVertex3f(context, g_vpo_aPos, v);
@@ -633,6 +639,7 @@ void glVertex3f(GLfloat x, GLfloat y, GLfloat z)
 
 void glVertex3fv(const GLfloat *v)
 {
+	++frameVertices;
 	g_vert_count++;
 	rsxDrawVertex3f(context, g_vpo_aPos, (float*)v);
 }
@@ -2055,6 +2062,7 @@ void _setup_draw_env(void) {
 // Also move rsxutil.c functionality over to here
 void ps3glInit(void)
 {
+	frameDraws=frameVertices=lastGpuReport=0;
 	memset(&ffpUniformCache,0,sizeof(ffpUniformCache));
 	atexit(_program_exit_callback);
 	void *host_addr = memalign(1024*1024,HOST_SIZE);
@@ -2182,5 +2190,12 @@ void ps3glInit(void)
 void ps3glSwapBuffers(void)
 {
 	PS3SessionLog_trace("RSX DIAG: ps3glSwapBuffers. buffer space used: %d / %d bytes.", (int)((uint8_t*)context->current - (uint8_t*)context->begin), (int)(context->end - context->begin) * 4);
+	Uint32 start=SDL_GetTicks();
 	flip();
+	Uint32 now=SDL_GetTicks(),elapsed=now-start;
+	if(elapsed>=100 && now-lastGpuReport>=1000) {
+		PS3SessionLog_event("GPU FRAME: wait_ms=%u draws=%u vertices=%u",elapsed,frameDraws,frameVertices);
+		lastGpuReport=now;
+	}
+	frameDraws=frameVertices=0;
 }

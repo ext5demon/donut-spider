@@ -1,0 +1,16 @@
+// Circular Sanctuary pulse mask. No texture, palette or colour-effect dispatch.
+void main(float4 color:COLOR0,float2 pixel:WPOS,
+          uniform float4 uRippleCenter,uniform float4 uRippleRadius,
+          out float4 result) {
+    float radius=uRippleRadius.x,limit=uRippleRadius.y,thickness=uRippleRadius.z;
+    float d=length(pixel-uRippleCenter.xy);
+    float edge=max(0,d-radius+thickness);
+    float rim=thickness/3;
+    float brightness=d/max(radius,.0001);
+    if(edge>0)brightness=.6;
+    if(edge>rim)brightness=.8;
+    if(edge>2*rim)brightness=1;
+    float start=limit/3;
+    float fade=saturate(1-(radius-start)/max(limit-start,.0001));
+    result=float4(color.rgb,d<=radius ? min(edge,1)*brightness*fade : 0);
+}
