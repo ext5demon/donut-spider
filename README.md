@@ -1,13 +1,15 @@
-# Spider Donut v0.2 Beta
+# Spider Donut v0.3 Beta
 
 ![Spider Donut logo](assets/donut-spider-logo.png)
 
 Spider Donut is an experimental GameMaker bytecode runner for **PlayStation 3**,
-using the native libgcm / RSX backend. This beta includes the Chapter 3 work
-through bdev04, alongside chapter discovery, controller handoff, surface/readback,
-rendering and audio fixes developed through PS3 playtesting.
+using the native libgcm / RSX backend. This beta includes the Chapter 3 and
+Chapter 4 work through bdev06, including
+Sanctuary pulse animation, window dust, crystal-tower layer drawing, PS3 timing
+and GPU diagnostics. Chapter discovery, controller handoff, surface/readback,
+rendering and audio fixes remain included.
 
-[Download v0.2](https://github.com/ext5demon/donut-spider/releases/tag/v0.2)
+[Download v0.3](https://github.com/ext5demon/donut-spider/releases/tag/v0.3)
 · [Report a bug](https://github.com/ext5demon/donut-spider/issues)
 
 ## Chapter status
@@ -20,12 +22,12 @@ Fully playable means the chapter can be played through; it does not mean bug-fre
 | Chapter 1 | Fully playable |
 | Chapter 2 | Playable with some minor bugs |
 | Chapter 3 | Fully playable |
-| Chapter 4 | Bootable |
+| Chapter 4 | Playable |
 | Chapter 5 | Doesn't work |
 
-**Bootable** means the chapter starts; it does not mean it can be completed.
-Compatibility depends on the game version and matching chapter assets. This is
-beta software, and slowdowns or unsupported effects can still occur.
+Chapter 4 is **playable** according to project playtesting, with the known issues
+listed below. Compatibility depends on the game version and matching chapter
+assets. This is beta software, and slowdowns or unsupported effects can still occur.
 
 ## What you need
 
@@ -42,16 +44,16 @@ Toby Fox, 8-4, GameMaker and YoYo Games.
 
 ## Install and play
 
-1. Download `spider-donut-v0.2.pkg` from the [v0.2 release](https://github.com/ext5demon/donut-spider/releases/tag/v0.2).
+1. Download `spider-donut-v0.3.pkg` from the [v0.3 release](https://github.com/ext5demon/donut-spider/releases/tag/v0.3).
 2. Copy the PKG to a FAT32 USB drive, then install it with the PS3's Package Manager.
 3. Prepare your chapter folders as described below and copy them to USB or internal storage.
-4. Launch **Spider Donut v0.2 Beta** from the XMB. It searches mounted storage for chapters.
+4. Launch **Spider Donut v0.3 Beta** from the XMB. It searches mounted storage for chapters.
 5. Select a discovered chapter with **Cross**, then select **Play**. Use **Browse**
    to select a `data.win` manually, or **Refresh** after connecting storage.
 
-Keep your existing chapter folders and saves when upgrading a dev6/dev7 build;
+Keep your existing chapter folders and saves when upgrading a beta or dev build;
 install over the app rather than deleting it. The app uses title ID **DONSD0001**
-and PS3 installer revision **00.18**, independently of the public version `v0.2`.
+and PS3 installer revision **00.22**, independently of the public version `v0.3`.
 
 ## Build TEXTURES.BIN
 
@@ -121,7 +123,7 @@ Example USB root after copying your own files:
 
 ```text
 USB_ROOT/
-  spider-donut-v0.2.pkg
+  spider-donut-v0.3.pkg
   DELTARUNE/
     mus/                         # shared music, if present in your PC copy
     chapter1_windows/
@@ -175,10 +177,16 @@ Check logs for personal information before posting them. Do not upload
 `data.win`, texture bundles, music or saves to a public issue.
 
 Known limits include demanding scenes dropping frames or stuttering, incomplete
-shader/GML coverage, and the chapter support shown above. Roaring Knight attack
-slowdowns and the reported missing post-defeat sprites remain open QA items. Enemy-dialogue clipping
-and the Lancer Key Item highlight discrepancy remain open PS3 QA items. Host tests
-do not establish full real-console compatibility.
+shader/GML coverage, and the chapter support shown above. Chapter 4 reports
+still needing console
+confirmation include the Titan Spawn GPU slowdown/exit, the Wicabel/Organikk
+encounter, and the black-flame tower chase. bdev06 added a smaller pulse shader
+and GPU workload logging; a console fix for those performance reports has not
+been established. The separately reported old-picker screen is also unresolved.
+Roaring Knight attack slowdowns and missing post-defeat sprites remain open QA
+items. Enemy-dialogue clipping and the Lancer Key Item highlight discrepancy
+remain open PS3 QA items. Host tests do not establish full real-console
+compatibility.
 
 ## Build the PS3 package
 
@@ -190,13 +198,16 @@ CMake 3.21+, Ninja, Python 3 and the ps3dev packaging tools (`make_self_npdrm`,
 ```bash
 git clone https://github.com/ext5demon/donut-spider.git
 cd donut-spider
-git checkout v0.2
+git checkout v0.3
 export PS3DEV=/path/to/ps3dev
 export PSL1GHT="$PS3DEV"
 bash build.sh
 ```
 
-The script builds and finalizes `dist/spider-donut-v0.2.pkg` and a SHA-256 checksum.
+The PKG retains the supplied Spider Donut logo as its XMB icon and background.
+The preloader menu files are unchanged from dev7.1/v0.1.
+
+The script builds and finalizes `dist/spider-donut-v0.3.pkg` and a SHA-256 checksum.
 Set `JOBS`, `BUILD_DIR` or `OUTPUT_DIR` to override the defaults. The dev7.1 menu
 assets and embedded header are checked in; ordinary builds need no game copy,
 font download or image-generation step. To rebuild the header from those assets:

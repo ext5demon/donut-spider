@@ -12,7 +12,7 @@ bash tools/test-host.sh
 BUILD_DIR=build-sanitize SANITIZE=ON bash tools/test-host.sh
 ```
 
-There are 28 CTest tests, covering controller handoff/reconnection and stick
+There are 30 CTest tests, covering controller handoff/reconnection and stick
 thresholds, cropped pixel transfers, bounded DMA command submission, surfaces
 and lifetime reuse, chapter scanning, picker animation/input/draw state, texture
 bundle validation with synthetic fixtures, audio streaming/pitch/start-stop
@@ -25,6 +25,9 @@ Chapter 3 drawing checks cover immediate triangle fans, per-vertex colour/alpha,
 texture coordinates, trimmed/downscaled sprite parts, rotated four-corner
 colours and single-submission circles. Native OpenGL pixel checks exercise the
 legacy renderer's transparency mask, photo/sand grayscale and tone uniforms.
+Chapter 4 checks cover sampled Bezier X/Y handles, sprite moves and drawing on
+runtime-created layers, and safe same-layer/invalid moves. PS3 clock units,
+ripple pixels, tiled particle surfaces and GPU workload counters are also covered.
 Audio checks cover asset/group/voice/emitter volume composition, paused queries,
 resuming without restarting and stream lifetime. Long-path interpolation is
 compared against the original linear scan, including repeated path distances.
