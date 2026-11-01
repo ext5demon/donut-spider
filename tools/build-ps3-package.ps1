@@ -9,7 +9,7 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$version = 'v0.1'
+$version = 'v0.3'
 $isDev = $Variant -eq 'Dev'
 
 if ([string]::IsNullOrWhiteSpace($BuildDirectory)) {
@@ -47,14 +47,14 @@ if ($null -eq $elf) {
 }
 
 if ($isDev) {
-    $title = 'Spider Donut v0.1 Beta (diagnostics)'
+    $title = 'Spider Donut v0.3 Beta (diagnostics)'
     $appId = 'DONSD0001'
-    $contentId = 'UP0001-DONSD0001_00-SPIDERDONUTBETA1'
+    $contentId = 'UP0001-DONSD0001_00-SPIDERDONUTBETA3'
     $fileName = "donut-spider-dev-$version.pkg"
 } else {
-    $title = 'Spider Donut v0.1 Beta'
+    $title = 'Spider Donut v0.3 Beta'
     $appId = 'DONSD0001'
-    $contentId = 'UP0001-DONSD0001_00-SPIDERDONUTBETA1'
+    $contentId = 'UP0001-DONSD0001_00-SPIDERDONUTBETA3'
     $fileName = "spider-donut-$version.pkg"
 }
 
@@ -70,6 +70,7 @@ if (Test-Path -LiteralPath $stageDirectory) {
 $usrDirectory = Join-Path $stageDirectory 'USRDIR'
 New-Item -ItemType Directory -Force -Path $usrDirectory, $OutputDirectory | Out-Null
 Copy-Item -LiteralPath (Join-Path $repoRoot 'PKG_TEMPLATE\ICON0.PNG') -Destination (Join-Path $stageDirectory 'ICON0.PNG')
+Copy-Item -LiteralPath (Join-Path $repoRoot 'PKG_TEMPLATE\PIC1.PNG') -Destination (Join-Path $stageDirectory 'PIC1.PNG')
 
 $oldPath = $env:Path
 $env:Path = "$toolDirectory;$oldPath"
@@ -77,7 +78,7 @@ try {
     & $makeSelf $elf (Join-Path $usrDirectory 'EBOOT.BIN') $contentId
     if ($LASTEXITCODE -ne 0) { throw "make_self_npdrm failed with exit code $LASTEXITCODE" }
 
-    & $sfo --fromxml (Join-Path $repoRoot 'packaging\v0.1.xml') (Join-Path $stageDirectory 'PARAM.SFO')
+    & $sfo --fromxml (Join-Path $repoRoot 'packaging\v0.3.xml') (Join-Path $stageDirectory 'PARAM.SFO')
     if ($LASTEXITCODE -ne 0) { throw "sfo failed with exit code $LASTEXITCODE" }
 
     $outputPackage = Join-Path $OutputDirectory $fileName
